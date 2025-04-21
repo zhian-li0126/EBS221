@@ -17,13 +17,19 @@ function q_next = robot_bike_dyn(q, u, umin, umax, Qmin, Qmax, L, tau_gamma, tau
     gamma_d = max(min(gamma_d, umax(1)), umin(1));
     v_d     = max(min(v_d, umax(2)), umin(2));
 
-    % First-order dynamics for steering and velocity
-    dgamma = (gamma_d - gamma) / tau_gamma;
-    dv     = (v_d - v) / tau_v;
+    % 3) steering dynamics  (τγ = 0  →  instant steer)
+    if tau_gamma == 0
+        gamma = gamma_d;
+    else
+        gamma = gamma + dt * (gamma_d - gamma) / tau_gamma;
+    end
 
-    % Euler integration to update gamma and v
-    gamma = gamma + dt * dgamma;
-    v     = v + dt * dv;
+    % 4) speed dynamics  (τv = 0  →  instant speed change)
+    if tau_v == 0
+        v = v_d;
+    else
+        v = v + dt * (v_d - v) / tau_v;
+    end
 
     % Bicycle model kinematics
     dx     = v * cos(theta);
