@@ -35,7 +35,7 @@ function q_next = robot_bike_dyn(q, u, umin, umax, Qmin, Qmax, L, tau_gamma, tau
         end
     
         % Update velocity
-        if tau_v <= eplison
+        if tau_v <= epsilon
             v = v_d;
         else
             v = v + dt * (v_d - v) / tau_v;

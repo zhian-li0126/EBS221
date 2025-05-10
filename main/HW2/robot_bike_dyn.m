@@ -1,110 +1,66 @@
-%{
-
-This version now computes DT
-corrected v and gamma integration
-tau_gamma corrected, added tolerance for tau_gamma and tau_v
-
-%}
-
-
 function q_next = robot_bike_dyn(q, u, umin, umax, Qmin, Qmax, L, tau_gamma, tau_v)
-    global dt; 
-    global DT;
+% robot_bike_dyn  Integrates a 5-state bicycle model for DT seconds
+%
+%   q_next = robot_bike_dyn(q, u, umin, umax, Qmin, Qmax, L, ...
+%                           tau_gamma, tau_v)
+%
+%   The function advances the state from q(k) to q(k+1) by integrating
+%   the dynamics with a small time-step dt inside the sampling interval DT.
+%
+%   GLOBALS (set once in main script):
+%       dt  – inner Euler step (e.g. 1 ms)
+%       DT  – controller period (e.g. 100 ms)
 
-    % Clip desired inputs
-    gamma_d = max(min(u(1), umax(1)), umin(1));
-    v_d     = max(min(u(2), umax(2)), umin(2));
-    
-    % Unpack initial state
+    % globals 
+    global dt
+    global DT
+
+    % unpack current state 
     x     = q(1);
     y     = q(2);
     theta = q(3);
     gamma = q(4);
     v     = q(5);
-    epsilon = 10e-12; % tolerance of error
 
-    % Number of integration steps
-    N_steps = DT - dt;
-    
-    for i = 0:N_steps
-        % Update steering
-        if tau_gamma <= epsilon
+    % saturate desired inputs
+    gamma_d = min(max(u(1), umin(1)), umax(1));
+    v_d     = min(max(u(2), umin(2)), umax(2));
+
+    eps = 1e-12;                  % numerical zero for the time constants
+
+    % fine-step Euler integration over [0, DT) 
+    for t = 0 : dt : DT-dt
+        % -- steering first-order system --
+        if tau_gamma <= eps
             gamma = gamma_d;
         else
             gamma = gamma + dt * (gamma_d - gamma) / tau_gamma;
         end
-    
-        % Update velocity
-        if tau_v <= eplison
+
+        % -- speed first-order system --
+        if tau_v <= eps
             v = v_d;
         else
             v = v + dt * (v_d - v) / tau_v;
         end
-    
-        % Bicycle model kinematics
-        dx     = v * cos(theta);
-        dy     = v * sin(theta);
-        dtheta = v * tan(gamma) / L;
-    
-        % Euler integration
-        x     = x + dt * dx;
-        y     = y + dt * dy;
-        theta = theta + dt * dtheta;
-    
-        % Optional: clamp gamma and v after each update if needed
+
+        % -- kinematic bicycle model --
+        x     = x + dt * v * cos(theta);
+        y     = y + dt * v * sin(theta);
+        theta = theta + dt * v * tan(gamma) / L;
+
+        % keep γ and v inside physical limits each sub-step
+        gamma = min(max(gamma, Qmin(4)), Qmax(4));
+        v     = min(max(v,     Qmin(5)), Qmax(5));
     end
 
-    % Wrap theta to [-pi, pi]
-    theta = wrapToPi(theta);
-    
-    % Clamp final state
-    x     = max(min(x, Qmax(1)), Qmin(1));
-    y     = max(min(y, Qmax(2)), Qmin(2));
-    theta = max(min(theta, Qmax(3)), Qmin(3));
-    gamma = max(min(gamma, Qmax(4)), Qmin(4));
-    v     = max(min(v, Qmax(5)), Qmin(5));
-    
-    q_next = [x; y; theta; gamma; v];
+    % clip final state to workspace limits 
+    x     = min(max(x,     Qmin(1)), Qmax(1));
+    y     = min(max(y,     Qmin(2)), Qmax(2));
+    theta = min(max(theta, Qmin(3)), Qmax(3));
+    gamma = min(max(gamma, Qmin(4)), Qmax(4));
+    v     = min(max(v,     Qmin(5)), Qmax(5));
 
-
-    % Extract current state
-    x     = q(1);
-    y     = q(2);
-    theta = q(3);
-    gamma = q(4);
-    v     = q(5);
-
-    % Desired inputs
-    gamma_d = u(1);  % desired steering angle
-    v_d     = u(2);  % desired velocity
-
-    % Saturate desired inputs
-    gamma_d = max(min(gamma_d, umax(1)), umin(1));
-    v_d     = max(min(v_d, umax(2)), umin(2));
-
-    % First-order dynamics for steering and velocity
-    dgamma = (gamma_d - gamma) / tau_gamma;
-    dv     = (v_d - v) / tau_v;
-
-    % Bicycle model kinematics
-    dx     = v * cos(theta);
-    dy     = v * sin(theta);
-    dtheta = v * tan(gamma) / L;
-
-    % Euler integration to update pose
-    x     = x + dt * dx;
-    y     = y + dt * dy;
-    theta = theta + dt * dtheta;
-    gamma = gamma + dt * dgamma;
-    v     = v + dt * dv;
-
-    % Saturate state vector
-    x     = max(min(x, Qmax(1)), Qmin(1));
-    y     = max(min(y, Qmax(2)), Qmin(2));
-    theta = max(min(theta, Qmax(3)), Qmin(3));
-    gamma = max(min(gamma, Qmax(4)), Qmin(4));
-    v     = max(min(v, Qmax(5)), Qmin(5));
-
-    % Pack next state
+    % pack output
     q_next = [x; y; theta; gamma; v];
 end
