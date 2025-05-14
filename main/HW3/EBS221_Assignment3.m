@@ -154,61 +154,68 @@ xlabel('X [m]'); ylabel('Y [m]');
 
 %% -------------------- Step D: Simulate Path Following with Pure Pursuit Controller --------------------
 
-% NOT WORKING YET
+clear q_history cte_history
+
+% Reset Integration Parameters
 global dt DT
-dt = 0.01;
-DT = 1000;
+dt = 0.001;    % 1 ms integration step
+DT = 0.01;     % 10 ms control update period
+T = 60.0;      % 60 seconds max time
+time_vec = 0:DT:T;
 
-% Reset initial state
-q = [-3*2.5; 20/2; 0; 0; 0]; % [x, y, theta, gamma, v]
-v_ref = 1.0;  % desired constant speed
+% Vehicle and Controller Parameters
+L = 2.5;               % wheelbase
+Ld = 2.0;              % look-ahead distance
+gamma_max = deg2rad(45);
+gamma_min = -gamma_max;
+v_ref = 1.0;           % constant forward speed
+tau_gamma = 0.0;       % instant steering dynamics
+tau_v = 0.0;           % instant speed dynamics
 
-% Declare controller limits
-gamma_limit = deg2rad(60);
-umin = [-gamma_limit; 0];     % [steering min; velocity min]
-umax = [ gamma_limit; 2];     % [steering max; velocity max]
-Qmin = [-Inf; -Inf; -Inf; -gamma_limit; 0];
-Qmax = [ Inf;  Inf;  Inf;  gamma_limit; 2];
-tau_gamma = 0.5; % steering actuator time constant
-tau_v = 0.5;     % speed actuator time constant
+% State bounds
+Qmax = [inf; inf; inf; gamma_max; v_ref];
+Qmin = [-inf; -inf; -inf; gamma_min; 0];
 
+% Initial state [x, y, theta, gamma, v]
+q = [-3*W; RL/2; 0; 0; v_ref];
 
-% Storage for analysis
 q_history = q';
 cte_history = [];
 
-for t_sim = 0:DT:300  % max sim time (adjust if needed)
-    % Call pure pursuit controller to compute steering reference
-    [gamma_ref, cross_track_error] = purePursuitController(q, L, Ld, waypoints);
+for k = 1:length(time_vec)
+    [steer_angle, cross_track_error] = purePursuitController(q, L, Ld, waypoints);
+    u = [steer_angle; v_ref];  % constant velocity
 
-    % Record cross-track error
-    cte_history(end+1) = cross_track_error;
+    q = robot_bike_dyn(q, u, [gamma_min; 0], [gamma_max; v_ref], Qmin, Qmax, L, tau_gamma, tau_v);
 
-    % Apply the control input
-    u = [gamma_ref; v_ref];
-    q = robot_bike_dyn(q, u, umin, umax, Qmin, Qmax, L, tau_gamma, tau_v);
-
-    % Log state
     q_history = [q_history; q'];
+    cte_history = [cte_history; cross_track_error];
 
-    % Terminate if reached the end
+    % Terminate if robot reaches the end of the waypoints
     if norm(q(1:2) - waypoints(end,:)') < 0.5
         break;
     end
 end
 
-% Plot the followed trajectory vs the desired path
+% Plot Robot Path
 figure;
-plot(waypoints(:,1), waypoints(:,2), 'b-', 'LineWidth', 1.5); hold on;
-plot(q_history(:,1), q_history(:,2), 'r-', 'LineWidth', 2);
-legend('Desired Waypoints', 'Robot Path');
+plot(waypoints(:,1), waypoints(:,2), 'r--', 'LineWidth', 2); hold on;
+plot(q_history(:,1), q_history(:,2), 'b-', 'LineWidth', 1.5);
+legend('Waypoints', 'Robot Path'); axis equal; grid on;
 xlabel('X [m]'); ylabel('Y [m]');
-title('Path Following Result');
-axis equal; grid on;
+title('Robot Path Following with Pure Pursuit Controller');
 
-% Report RMS cross-track error
+% Cross-Track Error Plot
+figure;
+plot(0:DT:(length(cte_history)-1)*DT, cte_history, 'LineWidth', 1.5);
+xlabel('Time [s]'); ylabel('Cross-Track Error [m]');
+title('Cross-Track Error over Time');
+grid on;
+
+% Report RMS Error
 rms_cte = sqrt(mean(cte_history.^2));
-disp(['RMS Cross-Track Error: ', num2str(rms_cte), ' meters']);
+disp(['RMS Cross-Track Error: ', num2str(rms_cte), ' m']);
+
 
 
 %%
