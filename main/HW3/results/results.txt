@@ -1,5 +1,5 @@
 Computed Optimal Route (Node Indices):
-1 13 3 5 15 17 7 9 19 21 11 10 20 18 8 6 16 14 4 2 12 22 
+1 13 3 6 16 18 8 11 21 20 10 9 19 15 5 7 17 14 4 2 12 22 
 
-Computed Minimum Distance: 116.9140
-Computation Time: 2.7812 seconds
+Computed Minimum Distance: 183.8717
+Computation Time: 3.0000 seconds
