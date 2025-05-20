@@ -199,11 +199,11 @@ global dt DT
 dt = 0.001;    % 1 ms integration step
 DT = 0.01;     % 10 ms control update period
 T = 60.0;      % 60 seconds max time
-time_vec = 0:DT:T-DT;
+time_vec = 0:DT:T;
 
 % Vehicle and Controller Parameters
 L = 2.5;               % wheelbase
-Ld = 0.5;              % look-ahead distance
+Ld = 2.0;              % look-ahead distance
 gamma_max = deg2rad(45);
 gamma_min = -gamma_max;
 v_ref = 1.0;           % constant forward speed
@@ -218,38 +218,24 @@ Qmin = [-inf; -inf; -inf; gamma_min; 0];
 q = [-3*W; RL/2; 0; 0; v_ref];
 
 numSteps    = length(time_vec);
-q_history   = zeros(numSteps+1,5);    % assuming state q has length 5
+q_history   = zeros(numSteps+1,5);
+q_history(1,:) = q.';  
 cte_history = zeros(numSteps,1);
 
-% store initial state
-q_history(1,:) = q.';
+for k = 1:length(time_vec)
+    [steer_angle, cross_track_error] = purePursuitController(q, L, Ld, waypoints);
+    u = [steer_angle; v_ref];  % constant velocity
 
-for k = 1:numSteps
-    % 1) compute steering
-    delta = purePursuitController(q, L, Ld, waypoints);
-    delta = max(min(delta,gamma_max),gamma_min);
+    q = robot_bike_dyn(q, u, [gamma_min; 0], [gamma_max; v_ref], Qmin, Qmax, L, tau_gamma, tau_v);
 
-    % 2) step the dynamics
-    q = robot_bike_dyn( ...
-          q, [delta; v_ref], ...
-          [gamma_min;0], [gamma_max;v_ref], ...
-          Qmin, Qmax, L, 0, 0 );
+    q_history = [q_history; q'];
+    cte_history = [cte_history; cross_track_error];
 
-    % 3) record state
-    q_history(k+1,:) = q.';
-
-    % 4) compute and store CTE
-    cte_history(k) = computeCrosstrackError(q, waypoints);
-
-    % 5) check termination
-    if norm(q(1:2) - waypoints(end,:).') < 0.001
+    % Terminate if robot reaches the end of the waypoints
+    if norm(q(1:2) - waypoints(end,:)') < 0.5
         break;
     end
 end
-
-% now cte_history is an array
-rms_cte = sqrt(mean(cte_history.^2));
-disp(['RMS CTE: ', num2str(rms_cte)]);
 
 % Plot Robot Path
 figure;
@@ -293,9 +279,9 @@ gamma_min30   = -gamma_limit_30;
 % reset simulation
 clear q_history cte_history
 dt = 0.001; DT = 0.01; T = 60.0;
-time_vec = 0:DT:T-DT;
+time_vec = 0:DT:T;
 L = 2.5;              % wheelbase
-Ld = 3;             % lookahead distance
+Ld = 2.0;             % lookahead distance
 v_ref = 1.0;          % constant speed
 
 Qmax = [Inf; Inf; Inf; gamma_max30; v_ref];
@@ -317,11 +303,9 @@ for k = 1:length(time_vec)
 
     q_history = [q_history; q.'];
     cte_history = [cte_history; cte];
+    fprintf('%d\n',cte)
 
-    if norm(q(1:2) - waypoints(end,:).') < 0.01
-        % trim unused entries
-        q_history   = q_history(1:k+1,:);
-        cte_history = cte_history(1:k);
+    if norm(q(1:2) - waypoints(end,:).') < 0.5
         break;
     end
 end
@@ -443,9 +427,7 @@ for k = 1:length(time_vec)
     q = robot_bike_dyn(q,control,[gamma_min30;0],[gamma_max30;v_ref],Qmin,Qmax,L,0,0);
     q_history = [q_history; q.'];
     cte_history = [cte_history; cte];
-    if norm(q(1:2)-waypoints30(end,:).')<0.5
-        break;
-    end
+    if norm(q(1:2)-waypoints30(end,:).')<0.5, break; end
 end
 
 figure;

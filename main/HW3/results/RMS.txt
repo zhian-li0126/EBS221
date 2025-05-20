@@ -1,0 +1,1 @@
+RMS Cross-Track Error (m): 6.874758e-01 
