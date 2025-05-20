@@ -85,15 +85,15 @@ end
 DMAT(1,2*N+2) = HUGE;
 DMAT(2*N+2,1) = HUGE;
 
-% % Add penalties for crossing the field diagonally (disable jumps not to neighbor rows)
-% for i = 2:N+1  % lower nodes
-%     for j = 2:N+1  % other lower nodes
-%         if abs(i - j) > 1
-%             DMAT(i, j) = HUGE;
-%             DMAT(i + N, j + N) = HUGE;
-%         end
-%     end
-% end
+% Add penalties for crossing the field diagonally (disable jumps not to neighbor rows)
+for i = 2:N+1  % lower nodes
+     for j = 2:N+1  % other lower nodes
+         if abs(i - j) > 1
+             DMAT(i, j) = HUGE;
+             DMAT(i + N, j + N) = HUGE;
+         end
+     end
+end
 
 
 %% -------------------- Solve TSP (Step B Completion) --------------------
@@ -135,53 +135,81 @@ title('Optimal Node Sequence Visualization');
 xlabel('X [m]'); ylabel('Y [m]'); axis equal;
 
 %% -------------------- Step C: Generate Waypoints Along the Node Sequence --------------------
-% ── Step C -- build dense way-points (with Π/Ω turns) ────────────────
 waypoints = [];
+waypointSegment = [];
 
+% route has length M = numel(route)
 for k = 1:numel(route)-1
-    i  = route(k);
-    j  = route(k+1);
-    p1 = [x(i), y(i)];
-    p2 = [x(j), y(j)];
+    i = route(k);
+    j = route(k+1);
+    p1 = [ x(i), y(i) ];
+    p2 = [ x(j), y(j) ];
 
-    % ----- straight row traversal (paired lower<->upper of the same row)
-    paired = ( (i>=2 && i<=N+1 && j-i==N) || ...
-               (j>=2 && j<=N+1 && i-j==N) );
-    if paired
-        nPts = ceil(norm(p2-p1)/0.5);
-        xs   = linspace(p1(1),p2(1),nPts)';
-        ys   = linspace(p1(2),p2(2),nPts)';
-        waypoints = [waypoints; xs(2:end) ys(2:end)];
-        continue
-    end
-
-    % ----- Π / Ω turn  (both nodes on the same headland)
-    sameBottom = all([i j] >= 2      & [i j] <= N+1);
-    sameTop    = all([i j] >= N+2    & [i j] <= 2*N+1);
-    if sameBottom || sameTop
-        % define start/end orientations
-        if sameBottom          % driving south -> north
-            theta0 = -pi/2;
-            theta1 =  pi/2;
-        else                   % top headland: north -> south
-            theta0 =  pi/2;
+    % determine newPts for this link
+    if k == 1
+        % -- entry turn: start -> first field node
+        theta0 = 0;
+        if j >= 2 && j <= N+1
+            theta1 = pi/2;
+        else
             theta1 = -pi/2;
         end
-        q0 = [ x(i), y(i), theta0 ];
-        q1 = [ x(j), y(j), theta1 ];
+        P      = dubins_core([p1,theta0],[p2,theta1], Rmin);
+        pts    = dubins_path_sample_many(P, 0.25);
+        newPts = pts(2:end,1:2);
 
-        P     = dubins_core(q0, q1, Rmin);
-        poses = dubins_path_sample_many(P, 0.25);
-        waypoints = [waypoints; poses(2:end,1:2)];
+    elseif k == numel(route)-1
+        % -- exit turn: last field node -> end
+        if i >= 2 && i <= N+1
+            theta0 = -pi/2; % come north in bottom headland
+        else
+            theta0 = pi/2;  % come south in top headland
+        end
+        theta1 = pi;    % face west toward end point
+        P      = dubins_core([p1,theta0],[p2,theta1], Rmin);
+        pts    = dubins_path_sample_many(P, 0.25);
+        newPts = pts(2:end,1:2);
 
-        continue
+    else
+        % -- middle links
+        % 1) straight row traversal?
+        paired = ( (i>=2 && i<=N+1 && j-i==N) || ...
+                   (j>=2 && j<=N+1 && i-j==N) );
+        if paired
+            nPts   = ceil(norm(p2-p1)/0.5);
+            xs     = linspace(p1(1),p2(1),nPts).';
+            ys     = linspace(p1(2),p2(2),nPts).';
+            newPts = [ xs(2:end), ys(2:end) ];
+
+        else
+            % 2) headland Π/Ω turn?
+            sameBottom = all([i j] >= 2      & [i j] <= N+1);
+            sameTop    = all([i j] >= N+2    & [i j] <= 2*N+1);
+            if sameBottom || sameTop
+                if sameBottom
+                    theta0 = -pi/2;   % south→north
+                    theta1 =  pi/2;
+                else
+                    theta0 =  pi/2;   % north→south
+                    theta1 = -pi/2;
+                end
+                P      = dubins_core([p1,theta0],[p2,theta1], Rmin);
+                pts    = dubins_path_sample_many(P, 0.25);
+                newPts = pts(2:end,1:2);
+
+            else
+                % 3) straight link (start/end approaches or any other)
+                nPts   = ceil(norm(p2-p1)/0.5);
+                xs     = linspace(p1(1),p2(1),nPts).';
+                ys     = linspace(p1(2),p2(2),nPts).';
+                newPts = [ xs(2:end), ys(2:end) ];
+            end
+        end
     end
 
-    % ----- start/end approaches → straight line
-    nPts = ceil(norm(p2-p1)/0.5);
-    xs   = linspace(p1(1),p2(1),nPts)';
-    ys   = linspace(p1(2),p2(2),nPts)';
-    waypoints = [waypoints; xs(2:end) ys(2:end)];
+    % append
+    waypoints       = [ waypoints;       newPts ];
+    waypointSegment = [ waypointSegment; k*ones(size(newPts,1),1) ];
 end
 
 % Plot the generated waypoints
@@ -198,15 +226,15 @@ clear q_history cte_history
 global dt DT
 dt = 0.001;    % 1 ms integration step
 DT = 0.01;     % 10 ms control update period
-T = 60.0;      % 60 seconds max time
-time_vec = 0:DT:T;
+T = 1000.0;      % run until it reaches the end point
+time_vec = 0:DT:T-DT;
 
 % Vehicle and Controller Parameters
 L = 2.5;               % wheelbase
-Ld = 2.0;              % look-ahead distance
+Ld = 1.0;              % look-ahead distance
 gamma_max = deg2rad(45);
 gamma_min = -gamma_max;
-v_ref = 1.0;           % constant forward speed
+v_ref = 0.5;           % constant forward speed
 tau_gamma = 0.0;       % instant steering dynamics
 tau_v = 0.0;           % instant speed dynamics
 
@@ -218,55 +246,63 @@ Qmin = [-inf; -inf; -inf; gamma_min; 0];
 q = [-3*W; RL/2; 0; 0; v_ref];
 
 numSteps    = length(time_vec);
-q_history   = zeros(numSteps+1,5);
-q_history(1,:) = q.';  
+q_history   = zeros(numSteps+1,5);    % assuming state q has length 5
 cte_history = zeros(numSteps,1);
 
-for k = 1:length(time_vec)
-    [steer_angle, cross_track_error] = purePursuitController(q, L, Ld, waypoints);
-    u = [steer_angle; v_ref];  % constant velocity
+% store initial state
+q_history(1,:) = q.';
 
-    q = robot_bike_dyn(q, u, [gamma_min; 0], [gamma_max; v_ref], Qmin, Qmax, L, tau_gamma, tau_v);
+for k = 1:numSteps
+    % 1) compute steering
+    [delta, cte] = purePursuitController(q, L, Ld, waypoints, waypointSegment);
+    delta = max(min(delta,gamma_max),gamma_min);
 
-    q_history = [q_history; q'];
-    cte_history = [cte_history; cross_track_error];
+    % 2) step the dynamics
+    q = robot_bike_dyn( ...
+          q, [delta; v_ref], ...
+          [gamma_min;0], [gamma_max;v_ref], ...
+          Qmin, Qmax, L, 0, 0 );
 
-    % Terminate if robot reaches the end of the waypoints
-    if norm(q(1:2) - waypoints(end,:)') < 0.5
+    % 3) record state
+    q_history(k+1,:) = q.';
+
+    % 4) compute and store CTE
+    cte_history(k) = computeCrosstrackError(q, waypoints);
+
+    % 5) check termination
+    if norm(q(1:2) - waypoints(end,:).') < 0.1 || k == 
+        % trim unused entries
+        q_history   = q_history(1:k+1,:);
+        cte_history = cte_history(1:k);
         break;
     end
 end
 
-% Plot Robot Path
-figure;
-plot(waypoints(:,1), waypoints(:,2), 'r--', 'LineWidth', 2); hold on;
-plot(q_history(:,1), q_history(:,2), 'b-', 'LineWidth', 1.5);
-legend('Waypoints', 'Robot Path'); axis equal; grid on;
-xlabel('X [m]'); ylabel('Y [m]');
-title('Robot Path Following with Pure Pursuit Controller');
 
-saveas(gcf, "results\robot_path.png")
-
-% Cross-Track Error Plot
-figure;
-plot(0:DT:(length(cte_history)-1)*DT, cte_history, 'LineWidth', 1.5);
-xlabel('Time [s]'); ylabel('Cross-Track Error [m]');
-title('Cross-Track Error over Time');
-grid on;
-
-saveas(gcf, "results\cte.png")
-
-% Report RMS Error
+% results
 rms_cte = sqrt(mean(cte_history.^2));
-disp(['RMS Cross-Track Error: ', num2str(rms_cte), ' m']);
+disp(['Adaptive Ld RMS CTE: ', num2str(rms_cte), ' m']);
 
-% Save RMS Error
-% Open a new file (or overwrite if it exists)
-fid = fopen('results\RMS.txt','w');
+% save figures as before
+figure;
+plot(wp(:,1), wp(:,2), 'r--'); hold on;
+plot(q_history(:,1), q_history(:,2), 'b-');
+axis equal; grid on;
+title('Adaptive Ld Path Following');
+xlabel('X [m]'); ylabel('Y [m]');
+saveas(gcf, 'results\adaptive_robot_path.png');
 
-% Write each piece
-fprintf(fid, 'RMS Cross-Track Error (m): ');
-fprintf(fid, '%d ', rms_cte);          % print each index with a space
+figure;
+t = (0:DT:(numel(cte_history)-1)*DT).';
+plot(t, cte_history);
+grid on;
+title('Adaptive Ld Cross-Track Error');
+xlabel('Time [s]'); ylabel('CTE [m]');
+saveas(gcf, 'results\adaptive_cte.png');
+
+% save RMS
+fid = fopen('results\RMS_adaptive.txt','w');
+fprintf(fid, 'RMS CTE (adaptive Ld): %.4f\n', rms_cte);
 fclose(fid);
 
 %% -------------------- Step E: Simulate with ±30° Steering on Same Path --------------------
@@ -279,9 +315,9 @@ gamma_min30   = -gamma_limit_30;
 % reset simulation
 clear q_history cte_history
 dt = 0.001; DT = 0.01; T = 60.0;
-time_vec = 0:DT:T;
+time_vec = 0:DT:T-DT;
 L = 2.5;              % wheelbase
-Ld = 2.0;             % lookahead distance
+Ld = 3;             % lookahead distance
 v_ref = 1.0;          % constant speed
 
 Qmax = [Inf; Inf; Inf; gamma_max30; v_ref];
@@ -303,9 +339,11 @@ for k = 1:length(time_vec)
 
     q_history = [q_history; q.'];
     cte_history = [cte_history; cte];
-    fprintf('%d\n',cte)
 
-    if norm(q(1:2) - waypoints(end,:).') < 0.5
+    if norm(q(1:2) - waypoints(end,:).') < 0.01
+        % trim unused entries
+        q_history   = q_history(1:k+1,:);
+        cte_history = cte_history(1:k);
         break;
     end
 end
@@ -427,7 +465,9 @@ for k = 1:length(time_vec)
     q = robot_bike_dyn(q,control,[gamma_min30;0],[gamma_max30;v_ref],Qmin,Qmax,L,0,0);
     q_history = [q_history; q.'];
     cte_history = [cte_history; cte];
-    if norm(q(1:2)-waypoints30(end,:).')<0.5, break; end
+    if norm(q(1:2)-waypoints30(end,:).')<0.5
+        break;
+    end
 end
 
 figure;
@@ -711,7 +751,7 @@ function path = dubins_curve(p1, p2, r, stepsize, quiet)
     end
 end
 
-function path = dubins_path_sample_many( param, stepsize)
+function path = dubins_path_sample_many(param, stepsize)
     if param.flag < 0
         path = 0;
         return

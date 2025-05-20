@@ -34,6 +34,4 @@ function [steer_angle, cross_track_error] = purePursuitController(q, L, Ld, path
     % Cross-track error: distance to the closest path point
     cross_track_error = sqrt((x - path(closest_idx,1))^2 + (y - path(closest_idx,2))^2);
 
-    % Enforce steering limits (±45 deg in radians)
-    steer_angle = max(min(steer_angle, deg2rad(45)), -deg2rad(45));
 end
