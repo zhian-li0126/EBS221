@@ -92,7 +92,8 @@
 % Release: 2.0
 % Release Date: 05/01/2014
 function varargout = tspof_ga(varargin)
-    
+    rng(0);  % Fix random seed for reproducibility
+
     % Initialize default configuration
     defaultConfig.xy          = 10*rand(50,2);
     defaultConfig.dmat        = [];
