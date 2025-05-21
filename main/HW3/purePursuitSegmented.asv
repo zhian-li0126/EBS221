@@ -46,7 +46,7 @@ function [steer, cte, status] = purePursuitSegmented( ...
         steer  = max(min(steer, gamma_max), gamma_min);
         status = 1;      
     
-    elseif curSeg == lastSeg && gpDist > prevDist && nxgpDist < nxprevDist %prevent the robot get 
+    elseif curSeg == lastSeg && gpDist > prevDist && nxgpDist < nxprevDist %prevent the robot get lost in the last segment
         % If in the last segment AND:
         % 1) Moving away from the last guided point, PLUS,
         % 2) Getting closer to the end point

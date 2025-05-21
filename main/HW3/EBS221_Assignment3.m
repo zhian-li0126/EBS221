@@ -769,9 +769,9 @@ time_vec = 0:DT:T-DT;
 
 % Vehicle and Controller Parameters
 L = 2.5;               % wheelbase
-Ld_line = 2.0;         % look-ahead distance
-Ld_turn = 1.0;
-gamma_max = deg2rad(45);  % 30 degree steering limit
+Ld_line = 0.8;         % look-ahead distance
+Ld_turn = 0.5;
+gamma_max = deg2rad(30);  % 30 degree steering limit
 gamma_min = -gamma_max;
 v_ref = 1.0;           % constant forward speed
 tau_gamma = 0.0;       % instant steering dynamics

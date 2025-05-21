@@ -1,1 +1,1 @@
-RMS CTE (30° optimized path): 0.0591
+RMS CTE (30° optimized path): 0.1489
