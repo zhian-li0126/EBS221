@@ -1,0 +1,2 @@
+Route length : 244.931 m
+RMS CTE       : 0.5996 m

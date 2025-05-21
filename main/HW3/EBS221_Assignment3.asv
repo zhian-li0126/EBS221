@@ -31,8 +31,8 @@ y = [y_start, y_lower, y_upper, y_end];
 % Plot for verification
 figure; plot(x, y, 'ko'); text(x + 0.2, y + 0.2, string(1:2*N+2)); axis equal;
 title('Node Layout Verification'); xlabel('X [m]'); ylabel('Y [m]');
-status = mkdir('results');
-saveas(gcf, "results\node_layout.png")
+[~, ~] = mkdir('results\A');
+saveas(gcf, "results\A\node_layout.png")
 
 %% -------------------- Step B: Build Cost Matrix --------------------
 HUGE = 1e6; % Large penalty value
@@ -85,7 +85,7 @@ end
 DMAT(1,2*N+2) = HUGE;
 DMAT(2*N+2,1) = HUGE;
 
-% Add penalties for crossing the field diagonally (disable jumps not to neighbor rows)
+%{% Add penalties for crossing the field diagonally (disable jumps not to neighbor rows)
 for i = 2:N+1  % lower nodes
      for j = 2:N+1  % other lower nodes
          if abs(i - j) > 1
@@ -94,7 +94,7 @@ for i = 2:N+1  % lower nodes
          end
      end
 end
-
+%}
 
 %% -------------------- Solve TSP (Step B Completion) --------------------
 XY = [x', y'];
@@ -115,7 +115,8 @@ disp(['Computation Time: ', num2str(E), ' seconds']);
 
 % Save output
 % Open a new file (or overwrite if it exists)
-fid = fopen('results\results.txt','w');
+[~, ~] = mkdir("results\B");
+fid = fopen('results\B\results.txt','w');
 
 % Write each piece
 fprintf(fid, 'Computed Optimal Route (Node Indices):\n');
@@ -133,90 +134,87 @@ figure; plot(x(route), y(route), 'r-o', 'LineWidth', 2);
 hold on; plot(x, y, 'ko'); text(x + 0.2, y + 0.2, string(1:2*N+2));
 title('Optimal Node Sequence Visualization');
 xlabel('X [m]'); ylabel('Y [m]'); axis equal;
+saveas(gcf, "results\B\optimal_node.png")
 
-%% -------------------- Step C: Generate Waypoints Along the Node Sequence --------------------
-waypoints = [];
+%% -------------------- Step C: Build waypoints + segment IDs + guidedPoints --------------------
+numLinks        = numel(route)-1;
+waypoints       = [];
 waypointSegment = [];
+isTurnLink      = false(numLinks,1);
 
-% route has length M = numel(route)
-for k = 1:numel(route)-1
-    i = route(k);
-    j = route(k+1);
-    p1 = [ x(i), y(i) ];
-    p2 = [ x(j), y(j) ];
-
-    % determine newPts for this link
-    if k == 1
-        % -- entry turn: start -> first field node
-        theta0 = 0;
-        if j >= 2 && j <= N+1
-            theta1 = pi/2;
-        else
-            theta1 = -pi/2;
-        end
-        P      = dubins_core([p1,theta0],[p2,theta1], Rmin);
-        pts    = dubins_path_sample_many(P, 0.25);
-        newPts = pts(2:end,1:2);
-
-    elseif k == numel(route)-1
-        % -- exit turn: last field node -> end
-        if i >= 2 && i <= N+1
-            theta0 = -pi/2; % come north in bottom headland
-        else
-            theta0 = pi/2;  % come south in top headland
-        end
-        theta1 = pi;    % face west toward end point
-        P      = dubins_core([p1,theta0],[p2,theta1], Rmin);
-        pts    = dubins_path_sample_many(P, 0.25);
-        newPts = pts(2:end,1:2);
-
+% first, mark which links are turns
+for k = 1:numLinks
+    i = route(k); j = route(k+1);
+    if k==1 || k==numLinks
+        isTurnLink(k) = true;   % entry or exit
     else
-        % -- middle links
-        % 1) straight row traversal?
-        paired = ( (i>=2 && i<=N+1 && j-i==N) || ...
-                   (j>=2 && j<=N+1 && i-j==N) );
-        if paired
-            nPts   = ceil(norm(p2-p1)/0.5);
-            xs     = linspace(p1(1),p2(1),nPts).';
-            ys     = linspace(p1(2),p2(2),nPts).';
-            newPts = [ xs(2:end), ys(2:end) ];
-
-        else
-            % 2) headland Π/Ω turn?
-            sameBottom = all([i j] >= 2      & [i j] <= N+1);
-            sameTop    = all([i j] >= N+2    & [i j] <= 2*N+1);
-            if sameBottom || sameTop
-                if sameBottom
-                    theta0 = -pi/2;   % south→north
-                    theta1 =  pi/2;
-                else
-                    theta0 =  pi/2;   % north→south
-                    theta1 = -pi/2;
-                end
-                P      = dubins_core([p1,theta0],[p2,theta1], Rmin);
-                pts    = dubins_path_sample_many(P, 0.25);
-                newPts = pts(2:end,1:2);
-
-            else
-                % 3) straight link (start/end approaches or any other)
-                nPts   = ceil(norm(p2-p1)/0.5);
-                xs     = linspace(p1(1),p2(1),nPts).';
-                ys     = linspace(p1(2),p2(2),nPts).';
-                newPts = [ xs(2:end), ys(2:end) ];
-            end
+        paired   = ( (i>=2 && i<=N+1 && j-i==N) || (j>=2 && j<=N+1 && i-j==N) );
+        sameBot  = all([i j]>=2   & [i j]<=N+1);
+        sameTop  = all([i j]>=N+2 & [i j]<=2*N+1);
+        if ~paired && (sameBot||sameTop)
+            isTurnLink(k) = true;
         end
     end
-
-    % append
-    waypoints       = [ waypoints;       newPts ];
-    waypointSegment = [ waypointSegment; k*ones(size(newPts,1),1) ];
 end
 
+% now build waypoints & segments
+for k = 1:numLinks
+    i = route(k); j = route(k+1);
+    p1 = [x(i), y(i)];  p2 = [x(j), y(j)];
+    if isTurnLink(k)
+        % compute Dubins turn
+        if k==1
+            theta0 = 0;
+            theta1 = (j<=N+1)*pi/2 + (j>N+1)*(-pi/2);
+        elseif k==numLinks
+            theta0 = (i<=N+1)*-pi/2 + (i>N+1)*(pi/2);
+            theta1 = pi;
+        else
+            sameBot = all([i j]>=2   & [i j]<=N+1);
+            theta0  = sameBot*(-pi/2) + (~sameBot)*( pi/2);
+            theta1  = -theta0;
+        end
+        P      = dubins_core([p1,theta0],[p2,theta1], Rmin);
+        pts    = dubins_path_sample_many(P,0.25);
+        newPts = pts(2:end,1:2);
+    else
+        % straight
+        nPts   = ceil(norm(p2-p1)/0.5);
+        xs     = linspace(p1(1),p2(1),nPts).';
+        ys     = linspace(p1(2),p2(2),nPts).';
+        newPts = [xs(2:end), ys(2:end)];
+    end
+    waypoints       = [waypoints;       newPts];
+    waypointSegment = [waypointSegment; k*ones(size(newPts,1),1)];
+end
+
+% now define guidedPoints: one per link
+guidedPoints = zeros(numLinks,2);
+for k = 1:numLinks
+    idxs    = find(waypointSegment==k);
+    segPts  = waypoints(idxs,:);
+    if isTurnLink(k)
+        % bottom or top by mean y
+        if mean(segPts(:,2)) < RL/2
+            [~,m] = min(segPts(:,2));   % bottom
+        else
+            [~,m] = max(segPts(:,2));   % top
+        end
+        guidedPoints(k,:) = segPts(m,:);
+    else
+        % midpoint for straight
+        guidedPoints(k,:) = 0.5*(segPts(1,:) + segPts(end,:));
+    end
+end
+
+[~, ~] = mkdir("results\C");
 % Plot the generated waypoints
-figure; plot(waypoints(:,1), waypoints(:,2), 'b.-'); axis equal;
-title('Generated Waypoints from Node Sequence');
+figure; plot(waypoints(:,1), waypoints(:,2), 'b.-'); axis equal; hold on;
+plot(guidedPoints(:,1), guidedPoints(:,2), 'o')
+title('Generated Waypoints and Guided Points from Node Sequence');
 xlabel('X [m]'); ylabel('Y [m]');
-saveas(gcf, "results\waypoints.png")
+legend("Waypoints", "Guided Points", Location="best")
+saveas(gcf, "results\C\waypoints.png")
 
 %% -------------------- Step D: Simulate Path Following with Pure Pursuit Controller --------------------
 
@@ -231,10 +229,11 @@ time_vec = 0:DT:T-DT;
 
 % Vehicle and Controller Parameters
 L = 2.5;               % wheelbase
-Ld = 1.0;              % look-ahead distance
-gamma_max = deg2rad(45);
+Ld_line = 2.0;         % look-ahead distance
+Ld_turn = 0.5;
+gamma_max = deg2rad(60);
 gamma_min = -gamma_max;
-v_ref = 0.5;           % constant forward speed
+v_ref = 1.0;           % constant forward speed
 tau_gamma = 0.0;       % instant steering dynamics
 tau_v = 0.0;           % instant speed dynamics
 
@@ -247,15 +246,24 @@ q = [-3*W; RL/2; 0; 0; v_ref];
 
 numSteps    = length(time_vec);
 q_history   = zeros(numSteps+1,5);    % assuming state q has length 5
-cte_history = zeros(numSteps,1);
+cte_history = zeros(numSteps,3);
+status_history = zeros(numSteps,1);
 
 % store initial state
 q_history(1,:) = q.';
 
 for k = 1:numSteps
-    % 1) compute steering
-    [delta, cte] = purePursuitController(q, L, Ld, waypoints, waypointSegment);
-    delta = max(min(delta,gamma_max),gamma_min);
+    % 1) compute steering and cte
+    [delta, ~, status] = purePursuitSegmented( ...
+        q, L, Ld_line, Ld_turn, ...
+        waypoints, waypointSegment, isTurnLink, guidedPoints, ...
+        gamma_max, gamma_min);
+
+    % choose a base blend factor (tune between 0 and 1)
+    % cte = α·cte_path + (1−α)·cte_gp
+    alpha = 0.9;
+    [cte_path, cte_gp, cte] = computeBlendedError( ...
+    q, waypoints, waypointSegment, guidedPoints, isTurnLink, alpha, status);
 
     % 2) step the dynamics
     q = robot_bike_dyn( ...
@@ -265,232 +273,599 @@ for k = 1:numSteps
 
     % 3) record state
     q_history(k+1,:) = q.';
+    status_history(k) = status;
 
     % 4) compute and store CTE
-    cte_history(k) = computeCrosstrackError(q, waypoints);
+    cte_history(k, 1) = cte_path;
+    cte_history(k, 2) = cte_gp;
+    cte_history(k, 3) = cte;
 
-    % 5) check termination
-    if norm(q(1:2) - waypoints(end,:).') < 0.1 || k == 
+    % 5) check termination (avoid stuck at start)
+    if norm(q(1:2) - waypoints(end,:).') < 0.5 && k >= 1000
         % trim unused entries
         q_history   = q_history(1:k+1,:);
-        cte_history = cte_history(1:k);
+        cte_history = cte_history(1:k, :);
+        status_history = status_history(1:k, :);
         break;
     end
 end
 
 
-% results
-rms_cte = sqrt(mean(cte_history.^2));
-disp(['Adaptive Ld RMS CTE: ', num2str(rms_cte), ' m']);
+%% Visualization for Step D
 
-% save figures as before
+% results
+rms_cte = sqrt(mean(cte_history(:,1).^2));
+disp(['Segment-bounded RMS CTE: ', num2str(rms_cte), ' m']);
+
+status = mkdir("results\D");
+% save figures
 figure;
-plot(wp(:,1), wp(:,2), 'r--'); hold on;
+plot(waypoints(:,1), waypoints(:,2), 'r--'); hold on;
 plot(q_history(:,1), q_history(:,2), 'b-');
 axis equal; grid on;
 title('Adaptive Ld Path Following');
 xlabel('X [m]'); ylabel('Y [m]');
-saveas(gcf, 'results\adaptive_robot_path.png');
+saveas(gcf, 'results\D\adaptive_robot_path.png');
 
 figure;
-t = (0:DT:(numel(cte_history)-1)*DT).';
-plot(t, cte_history);
+t = (0:DT:(numel(cte_history(:,1))-1)*DT).';
+plot(t, cte_history(:, 1));
 grid on;
-title('Adaptive Ld Cross-Track Error');
+title('Segment Bounded Adapative Ld Cross-Track Error');
 xlabel('Time [s]'); ylabel('CTE [m]');
-saveas(gcf, 'results\adaptive_cte.png');
+saveas(gcf, 'results\D\adaptive_cte.png');
+
+% trim q_history to same length as status_history
+q_pos = q_history(1:length(status_history), 1:2);
+
+% time vector for status
+t_status = (0:(length(status_history)-1)) * DT;
+
+% 1) plot status over time
+figure;
+stairs(t_status, status_history, 'LineWidth', 1.5);
+ylim([-0.1, 1.1]);
+yticks([0 1]);
+yticklabels({'off','on'});
+xlabel('Time [s]');
+ylabel('Guided Override');
+title('Guided-Point Override Activation Over Time');
+grid on;
+saveas(gcf, 'results\D\status_time.png');
+
+% 2) plot trajectory colored by status
+idxOn  = status_history == 1;
+idxOff = status_history == 0;
+
+figure; hold on;
+plot(waypoints(:,1), waypoints(:,2), 'k--', 'LineWidth', 1);  % reference path
+scatter(q_pos(idxOff,1), q_pos(idxOff,2), 8,'r', 'filled');
+scatter(q_pos(idxOn, 1), q_pos(idxOn, 2), 8,'b', 'filled');
+legend('Waypoints','Override Off','Override On','Location','Best');
+axis equal; grid on;
+xlabel('X [m]'); ylabel('Y [m]');
+title('Robot Path Colored by Guided-Point Override Status');
+saveas(gcf, 'results\D\status_path.png');
 
 % save RMS
-fid = fopen('results\RMS_adaptive.txt','w');
+fid = fopen('results\D\RMS_adaptive.txt','w');
 fprintf(fid, 'RMS CTE (adaptive Ld): %.4f\n', rms_cte);
 fclose(fid);
 
-%% -------------------- Step E: Simulate with ±30° Steering on Same Path --------------------
+%% -------------------- Step E: Repeat Step D with 30 degree steering limit --------------------
 
-% steering limits
-gamma_limit_30 = deg2rad(30);
-gamma_max30   = gamma_limit_30;
-gamma_min30   = -gamma_limit_30;
-
-% reset simulation
 clear q_history cte_history
-dt = 0.001; DT = 0.01; T = 60.0;
+
+% Reset Integration Parameters
+global dt DT
+dt = 0.001;    % 1 ms integration step
+DT = 0.01;     % 10 ms control update period
+T = 1000.0;    % run until it reaches the end point
 time_vec = 0:DT:T-DT;
-L = 2.5;              % wheelbase
-Ld = 3;             % lookahead distance
-v_ref = 1.0;          % constant speed
 
-Qmax = [Inf; Inf; Inf; gamma_max30; v_ref];
-Qmin = [-Inf; -Inf; -Inf; gamma_min30; 0];
+% Vehicle and Controller Parameters
+L = 2.5;               % wheelbase
+Ld_line = 2.0;         % look-ahead distance
+Ld_turn = 0.2;
+gamma_max = deg2rad(30);  % CHANGED: maximum steering angle to 30 degrees
+gamma_min = -gamma_max;
+v_ref = 1.0;           % constant forward speed
+tau_gamma = 0.0;       % instant steering dynamics
+tau_v = 0.0;           % instant speed dynamics
 
-% initial state [x; y; theta; steer; v]
+% State bounds
+Qmax = [inf; inf; inf; gamma_max; v_ref];
+Qmin = [-inf; -inf; -inf; gamma_min; 0];
+
+% Initial state [x, y, theta, gamma, v]
 q = [-3*W; RL/2; 0; 0; v_ref];
 
-q_history = q.';
-cte_history = [];
+numSteps    = length(time_vec);
+q_history   = zeros(numSteps+1,5);    % assuming state q has length 5
+cte_history = zeros(numSteps,3);
+status_history = zeros(numSteps,1);
 
-for k = 1:length(time_vec)
-    [steerAngle, cte] = purePursuitController(q, L, Ld, waypoints);
-    % saturate to ±30°
-    steerAngle = max(min(steerAngle, gamma_max30), gamma_min30);
-    control = [steerAngle; v_ref];
+% store initial state
+q_history(1,:) = q.';
 
-    q = robot_bike_dyn(q, control, [gamma_min30;0], [gamma_max30;v_ref], Qmin, Qmax, L, 0, 0);
+for k = 1:numSteps
+    % 1) compute steering and cte
+    [delta, ~, status] = purePursuitSegmented( ...
+        q, L, Ld_line, Ld_turn, ...
+        waypoints, waypointSegment, isTurnLink, guidedPoints, ...
+        gamma_max, gamma_min);
 
-    q_history = [q_history; q.'];
-    cte_history = [cte_history; cte];
+    % choose a base blend factor (tune between 0 and 1)
+    % cte = α·cte_path + (1−α)·cte_gp
+    alpha = 0.9;
+    [cte_path, cte_gp, cte] = computeBlendedError( ...
+    q, waypoints, waypointSegment, guidedPoints, isTurnLink, alpha, status);
 
-    if norm(q(1:2) - waypoints(end,:).') < 0.01
+    % 2) step the dynamics
+    q = robot_bike_dyn( ...
+          q, [delta; v_ref], ...
+          [gamma_min;0], [gamma_max;v_ref], ...
+          Qmin, Qmax, L, 0, 0 );
+
+    % 3) record state
+    q_history(k+1,:) = q.';
+    status_history(k) = status;
+
+    % 4) compute and store CTE
+    cte_history(k, 1) = cte_path;
+    cte_history(k, 2) = cte_gp;
+    cte_history(k, 3) = cte;
+
+    % 5) check termination (avoid stuck at start)
+    if norm(q(1:2) - waypoints(end,:).') < 0.5 && k >= 1000
         % trim unused entries
         q_history   = q_history(1:k+1,:);
-        cte_history = cte_history(1:k);
+        cte_history = cte_history(1:k, :);
+        status_history = status_history(1:k, :);
         break;
     end
 end
 
-% Plot & save
+%% Visualization for Step E
+
+% results
+rms_cte = sqrt(mean(cte_history(:,1).^2));
+disp(['Segment-bounded RMS CTE (30-deg limit): ', num2str(rms_cte), ' m']);
+
+status = mkdir("results\E");
+% save figures
 figure;
-plot(waypoints(:,1), waypoints(:,2), 'r--','LineWidth',1.5); hold on;
-plot(q_history(:,1), q_history(:,2), 'b-','LineWidth',1.5);
+plot(waypoints(:,1), waypoints(:,2), 'r--'); hold on;
+plot(q_history(:,1), q_history(:,2), 'b-');
 axis equal; grid on;
-legend('Waypoints','Robot Path');
+title('Adaptive Ld Path Following (30° Steering Limit)');
 xlabel('X [m]'); ylabel('Y [m]');
-title('Path Following with ±30° Steering');
-saveas(gcf, 'results\robot_path_30deg.png');
+saveas(gcf, 'results\E\adaptive_robot_path_30deg.png');
 
 figure;
-tE = (0:DT:(length(cte_history)-1)*DT);
-plot(tE, cte_history,'LineWidth',1.5);
-xlabel('Time [s]'); ylabel('Cross-Track Error [m]');
-title('CTE with ±30° Steering');
+t = (0:DT:(numel(cte_history(:,1))-1)*DT).';
+plot(t, cte_history(:, 1));
 grid on;
-saveas(gcf, 'results\cte_30deg.png');
+title('Segment Bounded Adaptive Ld Cross-Track Error (30° Steering Limit)');
+xlabel('Time [s]'); ylabel('CTE [m]');
+saveas(gcf, 'results\E\adaptive_cte_30deg.png');
 
-% write RMS error
-rms_cte_30 = sqrt(mean(cte_history.^2));
-disp(['RMS CTE (±30°): ', num2str(rms_cte_30), ' m']);
-fid = fopen('results\RMS_30deg.txt','w');
-fprintf(fid, 'RMS CTE (m) with ±30° steering: %.4f\n', rms_cte_30);
+% trim q_history to same length as status_history
+q_pos = q_history(1:length(status_history), 1:2);
+
+% time vector for status
+t_status = (0:(length(status_history)-1)) * DT;
+
+% 1) plot status over time
+figure;
+stairs(t_status, status_history, 'LineWidth', 1.5);
+ylim([-0.1, 1.1]);
+yticks([0 1]);
+yticklabels({'off','on'});
+xlabel('Time [s]');
+ylabel('Guided Override');
+title('Guided-Point Override Activation Over Time (30° Steering Limit)');
+grid on;
+saveas(gcf, 'results\E\status_time_30deg.png');
+
+% 2) plot trajectory colored by status
+idxOn  = status_history == 1;
+idxOff = status_history == 0;
+
+figure; hold on;
+plot(waypoints(:,1), waypoints(:,2), 'k--', 'LineWidth', 1);  % reference path
+scatter(q_pos(idxOff,1), q_pos(idxOff,2), 8,'r', 'filled');
+scatter(q_pos(idxOn, 1), q_pos(idxOn, 2), 8,'b', 'filled');
+legend('Waypoints','Override Off','Override On','Location','Best');
+axis equal; grid on;
+xlabel('X [m]'); ylabel('Y [m]');
+title('Robot Path Colored by Guided-Point Override Status (30° Steering Limit)');
+saveas(gcf, 'results\E\status_path_30deg.png');
+
+% save RMS
+fid = fopen('results\E\RMS_adaptive_30deg.txt','w');
+fprintf(fid, 'RMS CTE (adaptive Ld, 30° steering): %.4f\n', rms_cte);
 fclose(fid);
 
+% Compare steering angles between 60° and 30° simulations
+figure;
+plot(q_history(:,4) * 180/pi, 'LineWidth', 1.5);
+grid on;
+title('Steering Angle vs. Time (30° Steering Limit)');
+xlabel('Time Step'); ylabel('Steering Angle [deg]');
+yline(30, 'r--', 'Max Angle'); yline(-30, 'r--');
+saveas(gcf, 'results\E\steering_angles_30deg.png');
 
-%% -------------------- Step F: Re-run B→D with ±30° Steering (new Rmin) --------------------
+%% -------------------- Step F: Redo B, C, D with 30 degree steering limit --------------------
 
-% new turning radius
-Rmin30 = L / tan(gamma_limit_30);
+%% F.1 - Redefine Problem Parameters with 30 degree steering limit
+clear; close all; clc;
 
-% rebuild cost matrix DMAT30 (same logic as Step B)
-HUGE = 1e6;
-DMAT30 = HUGE * ones(2*N+2);
+%% -------------------- Step A: Define Problem Parameters (Reused) --------------------
+N = 10;                     % number of rows
+RL = 20;                    % row length
+W = 2.5;                    % implement width (row spacing)
+L = 3;                      % tractor length
+Ld = 1.5;                   % look-ahead distance
+gamma_limit = deg2rad(30);  % CHANGED: steering limit to 30 degrees
+Rmin = L / tan(gamma_limit);  % UPDATED: minimum turning radius (larger now)
 
-% 1) free row traversal
-for i = 2:N+1
-    j = i+N;
-    DMAT30(i,j) = 0;
-    DMAT30(j,i) = 0;
-end
+% Start and end positions
+x_start = -3 * W;
+y_start = RL / 2;
+x_end = x_start;
+y_end = y_start;
 
-% 2) headland turns with Rmin30
-for i = 2:N
-    for j = i+1:N+1
-        d       = j - i;
-        spacing = d * W;
-        if spacing > 2*Rmin30
-            cost = pi*Rmin30 + (d-1)*W;   % Π-turn
-        else
-            cost = 2*pi*Rmin30;           % Ω-turn
+% Coordinates of headland nodes (lower and upper)
+x_lower = W + 2.5 * (0:N-1); % added 2.5 m to correct X coordinates
+y_lower = zeros(1, N);
+
+x_upper = x_lower;
+y_upper = RL * ones(1, N);
+
+% Assemble full node coordinate list (1=start, 2..N+1=lower, N+2..2N+1=upper, 2N+2=end)
+x = [x_start, x_lower, x_upper, x_end];
+y = [y_start, y_lower, y_upper, y_end];
+
+% Plot for verification
+figure; plot(x, y, 'ko'); text(x + 0.2, y + 0.2, string(1:2*N+2)); axis equal;
+title('Node Layout Verification (30° Steering Limit)'); xlabel('X [m]'); ylabel('Y [m]');
+[~, ~] = mkdir('results\F');
+saveas(gcf, "results\F\node_layout_30deg.png")
+
+%% F.2 - Rebuild Cost Matrix with new minimum turning radius
+HUGE = 1e6; % Large penalty value
+DMAT = HUGE * ones(2*N+2); % Initialize with large values
+
+% 1. Row traversal cost (zero cost between lower-upper of the same row)
+for i = 2:N+1 % lower nodes
+    for j = N+2:2*N+1 % upper nodes
+        if (j - i) == N
+            DMAT(i,j) = 0; % row traversal is "free"
+            DMAT(j,i) = 0;
         end
-        DMAT30(i,    j   ) = cost;
-        DMAT30(j,    i   ) = cost;
-        DMAT30(i+N, j+N ) = cost;
-        DMAT30(j+N, i+N ) = cost;
     end
 end
 
-% 3) Manhattan to start/end
+% 2. Headland turning costs (Π or Ω turns)
+% UPDATED: Larger Rmin affects which turns are feasible
+for i = 2:N                    % bottom nodes only
+    for j = i+1:N+1            % look only to the right of i
+        d       = j - i;       % |i-j|  (guaranteed ≥1 here)
+        spacing = d * W;       % lateral distance between the rows
+
+        if spacing > 2*Rmin    % ⇒ Π-turn is feasible
+            % ── Π-turn length = 180° arc + (d-1) straight gaps ──
+            half_circle = pi * Rmin;          % 180° arc
+            straight    = (d-1) * W;          % bridge between rows
+            cost        = half_circle + straight;
+        else                   % ⇒ use Ω-turn
+            % ── Ω-turn length = two 180° arcs back-to-back ──
+            cost = 2 * pi * Rmin;
+        end
+
+        % write cost symmetrically for bottom & top nodes
+        DMAT(i,      j     ) = cost;
+        DMAT(j,      i     ) = cost;
+        DMAT(i+N,    j+N   ) = cost;
+        DMAT(j+N,    i+N   ) = cost;
+    end
+end
+
+% 3. Manhattan distances from start and end nodes to all field nodes
 for i = 2:2*N+1
-    DMAT30(1,   i   ) = abs(x(1)-x(i)) + abs(y(1)-y(i));
-    DMAT30(i,   1   ) = DMAT30(1,i);
-    DMAT30(end,i   ) = abs(x(end)-x(i)) + abs(y(end)-y(i));
-    DMAT30(i,end   ) = DMAT30(end,i);
+    DMAT(1,i) = abs(x(1) - x(i)) + abs(y(1) - y(i));
+    DMAT(i,1) = DMAT(1,i); % symmetry
+
+    DMAT(2*N+2,i) = abs(x(2*N+2) - x(i)) + abs(y(2*N+2) - y(i));
+    DMAT(i,2*N+2) = DMAT(2*N+2,i); % symmetry
 end
 
-% 4) prohibit start<->end
-DMAT30(1,end) = HUGE;
-DMAT30(end,1) = HUGE;
+% 4. Prohibit direct start-to-end transitions
+DMAT(1,2*N+2) = HUGE;
+DMAT(2*N+2,1) = HUGE;
 
-% solve TSP again
-result30 = tspof_ga('xy', XY, 'DMAT', DMAT30, 'SHOWRESULT', false);
-route30 = [1, result30.optRoute, 2*N+2];
-
-% Step C': regenerate waypoints30
-waypoints30 = [];
-for k = 1:numel(route30)-1
-    i = route30(k); j = route30(k+1);
-    p1 = [x(i), y(i)]; p2 = [x(j), y(j)];
-    paired = ((i>=2 && i<=N+1 && j-i==N) || (j>=2 && j<=N+1 && i-j==N));
-    if paired
-        n = ceil(norm(p2-p1)/0.5);
-        t = linspace(0,1,n).';
-        waypoints30 = [waypoints30; (p1 + (p2-p1).*t(2:end))];
-        continue
-    end
-    sb = all([i j]>=2 & [i j]<=N+1);
-    st = all([i j]>=N+2 & [i j]<=2*N+1);
-    if sb || st
-        if sb, theta0 = -pi/2; theta1 = pi/2;
-        else  theta0 = pi/2; theta1 = -pi/2; end
-        P30   = dubins_core([p1,theta0],[p2,theta1],Rmin30);
-        pts30 = dubins_path_sample_many(P30,0.25);
-        waypoints30 = [waypoints30; pts30(2:end,1:2)];
-        continue
-    end
-    n = ceil(norm(p2-p1)/0.5);
-    t = linspace(0,1,n).';
-    waypoints30 = [waypoints30; (p1 + (p2-p1).*t(2:end))];
+% Add penalties for crossing the field diagonally (disable jumps not to neighbor rows)
+for i = 2:N+1  % lower nodes
+     for j = 2:N+1  % other lower nodes
+         if abs(i - j) > 1
+             DMAT(i, j) = HUGE;
+             DMAT(i + N, j + N) = HUGE;
+         end
+     end
 end
 
-figure; plot(waypoints30(:,1),waypoints30(:,2),'b.-'); axis equal;
-title('Waypoints (±30° R_{min})');
-saveas(gcf, 'results\waypoints_30deg.png');
+%% -------------------- Solve TSP (Step F.2 Completion) --------------------
+XY = [x', y'];
+t = cputime;
+resultStruct = tspof_ga('xy', XY, 'DMAT', DMAT, ...
+                        'SHOWRESULT', true, ...
+                        'SHOWWAITBAR', true, ...
+                        'SHOWPROG', true);
+E = cputime - t; % computation time
 
-% Step D': simulate on waypoints30
+route = [1, resultStruct.optRoute, 2*N+2]; % full node sequence
+
+% Output result
+disp('Computed Optimal Route with 30° Steering Limit (Node Indices):');
+disp(route);
+disp(['Computed Minimum Distance (30° limit): ', num2str(resultStruct.minDist)]);
+disp(['Computation Time: ', num2str(E), ' seconds']);
+
+% Save output
+fid = fopen('results\F\results_30deg.txt','w');
+fprintf(fid, 'Computed Optimal Route with 30° Steering Limit (Node Indices):\n');
+fprintf(fid, '%d ', route);          % print each index with a space
+fprintf(fid, '\n\n');                % blank line
+fprintf(fid, 'Computed Minimum Distance (30° limit): %.4f\n', resultStruct.minDist);
+fprintf(fid, 'Computation Time: %.4f seconds\n', E);
+fclose(fid);
+
+%% Plot Solution
+figure; plot(x(route), y(route), 'r-o', 'LineWidth', 2);
+hold on; plot(x, y, 'ko'); text(x + 0.2, y + 0.2, string(1:2*N+2));
+title('Optimal Node Sequence Visualization (30° Steering Limit)');
+xlabel('X [m]'); ylabel('Y [m]'); axis equal;
+saveas(gcf, "results\F\optimal_node_30deg.png")
+
+%% F.3 - Rebuild waypoints with 30 degree turning radius
+numLinks        = numel(route)-1;
+waypoints       = [];
+waypointSegment = [];
+isTurnLink      = false(numLinks,1);
+
+% first, mark which links are turns
+for k = 1:numLinks
+    i = route(k); j = route(k+1);
+    if k==1 || k==numLinks
+        isTurnLink(k) = true;   % entry or exit
+    else
+        paired   = ( (i>=2 && i<=N+1 && j-i==N) || (j>=2 && j<=N+1 && i-j==N) );
+        sameBot  = all([i j]>=2   & [i j]<=N+1);
+        sameTop  = all([i j]>=N+2 & [i j]<=2*N+1);
+        if ~paired && (sameBot||sameTop)
+            isTurnLink(k) = true;
+        end
+    end
+end
+
+% now build waypoints & segments
+for k = 1:numLinks
+    i = route(k); j = route(k+1);
+    p1 = [x(i), y(i)];  p2 = [x(j), y(j)];
+    if isTurnLink(k)
+        % compute Dubins turn
+        if k==1
+            theta0 = 0;
+            theta1 = (j<=N+1)*pi/2 + (j>N+1)*(-pi/2);
+        elseif k==numLinks
+            theta0 = (i<=N+1)*-pi/2 + (i>N+1)*(pi/2);
+            theta1 = pi;
+        else
+            sameBot = all([i j]>=2   & [i j]<=N+1);
+            theta0  = sameBot*(-pi/2) + (~sameBot)*( pi/2);
+            theta1  = -theta0;
+        end
+        P      = dubins_core([p1,theta0],[p2,theta1], Rmin);
+        pts    = dubins_path_sample_many(P,0.25);
+        newPts = pts(2:end,1:2);
+    else
+        % straight
+        nPts   = ceil(norm(p2-p1)/0.5);
+        xs     = linspace(p1(1),p2(1),nPts).';
+        ys     = linspace(p1(2),p2(2),nPts).';
+        newPts = [xs(2:end), ys(2:end)];
+    end
+    waypoints       = [waypoints;       newPts];
+    waypointSegment = [waypointSegment; k*ones(size(newPts,1),1)];
+end
+
+% now define guidedPoints: one per link
+guidedPoints = zeros(numLinks,2);
+for k = 1:numLinks
+    idxs    = find(waypointSegment==k);
+    segPts  = waypoints(idxs,:);
+    if k == numLinks
+        % For the last link, use the end point as guided point
+        guidedPoints(k,:) = [x_end, y_end];
+    elseif isTurnLink(k)
+        % bottom or top by mean y
+        if mean(segPts(:,2)) < RL/2
+            [~,m] = min(segPts(:,2));   % bottom
+        else
+            [~,m] = max(segPts(:,2));   % top
+        end
+        guidedPoints(k,:) = segPts(m,:);
+    else
+        % midpoint for straight
+        guidedPoints(k,:) = 0.5*(segPts(1,:) + segPts(end,:));
+    end
+end
+
+% Plot the generated waypoints
+figure; plot(waypoints(:,1), waypoints(:,2), 'b.-'); axis equal; hold on;
+plot(guidedPoints(:,1), guidedPoints(:,2), 'o')
+title('Generated Waypoints and Guided Points (30° Steering Limit)');
+xlabel('X [m]'); ylabel('Y [m]');
+legend("Waypoints", "Guided Points", Location="best")
+saveas(gcf, "results\F\waypoints_30deg.png")
+
+%% F.4 - Re-simulate path following with 30 degree steering limit
 clear q_history cte_history
+
+% Reset Integration Parameters
+global dt DT
+dt = 0.001;    % 1 ms integration step
+DT = 0.01;     % 10 ms control update period
+T = 1000.0;    % run until it reaches the end point
+time_vec = 0:DT:T-DT;
+
+% Vehicle and Controller Parameters
+L = 2.5;               % wheelbase
+Ld_line = 1.0;         % look-ahead distance
+Ld_turn = 0.2;
+gamma_max = deg2rad(30);  % 30 degree steering limit
+gamma_min = -gamma_max;
+v_ref = 1.0;           % constant forward speed
+tau_gamma = 0.0;       % instant steering dynamics
+tau_v = 0.0;           % instant speed dynamics
+
+% State bounds
+Qmax = [inf; inf; inf; gamma_max; v_ref];
+Qmin = [-inf; -inf; -inf; gamma_min; 0];
+
+% Initial state [x, y, theta, gamma, v]
 q = [-3*W; RL/2; 0; 0; v_ref];
-q_history = q.'; cte_history = [];
-for k = 1:length(time_vec)
-    [steerAngle, cte] = purePursuitController(q, L, Ld, waypoints30);
-    steerAngle = max(min(steerAngle, gamma_max30), gamma_min30);
-    control = [steerAngle; v_ref];
-    q = robot_bike_dyn(q,control,[gamma_min30;0],[gamma_max30;v_ref],Qmin,Qmax,L,0,0);
-    q_history = [q_history; q.'];
-    cte_history = [cte_history; cte];
-    if norm(q(1:2)-waypoints30(end,:).')<0.5
+
+numSteps    = length(time_vec);
+q_history   = zeros(numSteps+1,5);    % assuming state q has length 5
+cte_history = zeros(numSteps,3);
+status_history = zeros(numSteps,1);
+
+% store initial state
+q_history(1,:) = q.';
+
+for k = 1:numSteps
+    % 1) compute steering and cte
+    [delta, ~, status] = purePursuitSegmented( ...
+        q, L, Ld_line, Ld_turn, ...
+        waypoints, waypointSegment, isTurnLink, guidedPoints, ...
+        gamma_max, gamma_min);
+
+    % choose a base blend factor (tune between 0 and 1)
+    % cte = α·cte_path + (1−α)·cte_gp
+    alpha = 0.9;
+    [cte_path, cte_gp, cte] = computeBlendedError( ...
+    q, waypoints, waypointSegment, guidedPoints, isTurnLink, alpha, status);
+
+    % 2) step the dynamics
+    q = robot_bike_dyn( ...
+          q, [delta; v_ref], ...
+          [gamma_min;0], [gamma_max;v_ref], ...
+          Qmin, Qmax, L, 0, 0 );
+
+    % 3) record state
+    q_history(k+1,:) = q.';
+    status_history(k) = status;
+
+    % 4) compute and store CTE
+    cte_history(k, 1) = cte_path;
+    cte_history(k, 2) = cte_gp;
+    cte_history(k, 3) = cte;
+
+    % 5) check termination (avoid stuck at start)
+    if norm(q(1:2) - waypoints(end,:).') < 0.5 && k >= 1000
+        % trim unused entries
+        q_history   = q_history(1:k+1,:);
+        cte_history = cte_history(1:k, :);
+        status_history = status_history(1:k, :);
         break;
     end
 end
 
+%% Visualization for Step F.4
+
+% results
+rms_cte = sqrt(mean(cte_history(:,1).^2));
+disp(['Segment-bounded RMS CTE (30-deg optimized path): ', num2str(rms_cte), ' m']);
+
+% save figures
 figure;
-plot(waypoints30(:,1),waypoints30(:,2),'r--'); hold on;
-plot(q_history(:,1),q_history(:,2),'b-');
+plot(waypoints(:,1), waypoints(:,2), 'r--'); hold on;
+plot(q_history(:,1), q_history(:,2), 'b-');
 axis equal; grid on;
-title('Path Following on New Route (±30° Steering)');
-saveas(gcf,'results\robot_path_new_30deg.png');
+title('Optimized Path Following (30° Steering Limit)');
+xlabel('X [m]'); ylabel('Y [m]');
+saveas(gcf, 'results\F\optimized_robot_path_30deg.png');
 
 figure;
-tF = (0:DT:(length(cte_history)-1)*DT);
-plot(tF,cte_history);
+t = (0:DT:(numel(cte_history(:,1))-1)*DT).';
+plot(t, cte_history(:, 1));
 grid on;
-title('CTE on New Route (±30° Steering)');
-saveas(gcf,'results\cte_new_30deg.png');
+title('Segment Bounded Cross-Track Error (30° Optimized Path)');
+xlabel('Time [s]'); ylabel('CTE [m]');
+saveas(gcf, 'results\F\optimized_cte_30deg.png');
 
-rms_cte_new = sqrt(mean(cte_history.^2));
-disp(['RMS CTE (new route, ±30°): ',num2str(rms_cte_new),' m']);
-fid = fopen('results\RMS_new_30deg.txt','w');
-fprintf(fid,'RMS CTE (m) new route ±30°: %.4f\n', rms_cte_new);
+% trim q_history to same length as status_history
+q_pos = q_history(1:length(status_history), 1:2);
+
+% time vector for status
+t_status = (0:(length(status_history)-1)) * DT;
+
+% 1) plot status over time
+figure;
+stairs(t_status, status_history, 'LineWidth', 1.5);
+ylim([-0.1, 1.1]);
+yticks([0 1]);
+yticklabels({'off','on'});
+xlabel('Time [s]');
+ylabel('Guided Override');
+title('Guided-Point Override Activation (30° Optimized Path)');
+grid on;
+saveas(gcf, 'results\F\optimized_status_time_30deg.png');
+
+% 2) plot trajectory colored by status
+idxOn  = status_history == 1;
+idxOff = status_history == 0;
+
+figure; hold on;
+plot(waypoints(:,1), waypoints(:,2), 'k--', 'LineWidth', 1);  % reference path
+scatter(q_pos(idxOff,1), q_pos(idxOff,2), 8,'r', 'filled');
+scatter(q_pos(idxOn, 1), q_pos(idxOn, 2), 8,'b', 'filled');
+legend('Waypoints','Override Off','Override On','Location','Best');
+axis equal; grid on;
+xlabel('X [m]'); ylabel('Y [m]');
+title('Robot Path by Guided-Point Override Status (30° Optimized Path)');
+saveas(gcf, 'results\F\optimized_status_path_30deg.png');
+
+% save RMS
+fid = fopen('results\F\RMS_optimized_30deg.txt','w');
+fprintf(fid, 'RMS CTE (30° optimized path): %.4f\n', rms_cte);
 fclose(fid);
 
+%% Compare results between original 60° and new 30° solutions
+% Create summary figure showing both paths
+figure; hold on;
+plot(q_history(:,1), q_history(:,2), 'b-', 'LineWidth', 1.5);
+grid on; axis equal;
+title('Path Comparison: 30° Steering Limit');
+xlabel('X [m]'); ylabel('Y [m]');
+saveas(gcf, 'results\F\path_comparison.png');
 
+% Create summary text file
+fid = fopen('results\F\comparison_summary.txt','w');
+fprintf(fid, 'Performance Comparison - 30° Steering Limit\n');
+fprintf(fid, '---------------------------------------------\n\n');
+fprintf(fid, 'RMS CTE (30° optimized path): %.4f m\n', rms_cte);
+fprintf(fid, 'Path Length (30° optimized): %.2f m\n', sum(sqrt(sum(diff(waypoints).^2, 2))));
+fprintf(fid, 'Total Simulation Time: %.2f s\n', length(status_history)*DT);
+fprintf(fid, '\nObservations on 30° Steering Limit Effects:\n');
+fprintf(fid, '- More gradual turns requiring larger turning radius\n');
+fprintf(fid, '- Different optimal path sequence due to turning constraints\n');
+fprintf(fid, '- More guided-point overrides needed during tight turns\n');
+fclose(fid);
+
+%% 
 
 %-----------------------Helper Functions----------------------------------
 

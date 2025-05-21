@@ -1,0 +1,11 @@
+Performance Comparison - 30° Steering Limit
+---------------------------------------------
+
+RMS CTE (30° optimized path): 1.3697 m
+Path Length (30° optimized): 593.72 m
+Total Simulation Time: 1000.00 s
+
+Observations on 30° Steering Limit Effects:
+- More gradual turns requiring larger turning radius
+- Different optimal path sequence due to turning constraints
+- More guided-point overrides needed during tight turns
