@@ -2,4 +2,4 @@ Computed Optimal Route with 30° Steering Limit (Node Indices):
 1 12 2 7 17 18 8 6 16 21 11 5 15 20 10 4 14 19 9 3 13 22 
 
 Computed Minimum Distance (30° limit): 297.0661
-Computation Time: 7.5625 seconds
+Computation Time: 7.8750 seconds

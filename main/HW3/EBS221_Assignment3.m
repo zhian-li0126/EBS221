@@ -394,7 +394,7 @@ time_vec = 0:DT:T-DT;
 
 % Vehicle and Controller Parameters
 L = 2.5;               % wheelbase
-Ld_line = 1.0;         % look-ahead distance
+Ld_line = 2.0;         % look-ahead distance
 Ld_turn = 0.2;
 gamma_max = deg2rad(30);  % CHANGED: maximum steering angle to 30 degrees
 gamma_min = -gamma_max;
@@ -461,7 +461,7 @@ end
 rms_cte = sqrt(mean(cte_history(:,1).^2));
 disp(['Segment-bounded RMS CTE (30-deg limit): ', num2str(rms_cte), ' m']);
 
-status = mkdir("results\E");
+[~, ~] = mkdir("results\E");
 % save figures
 figure;
 plot(waypoints(:,1), waypoints(:,2), 'r--'); hold on;
@@ -557,10 +557,19 @@ x = [x_start, x_lower, x_upper, x_end];
 y = [y_start, y_lower, y_upper, y_end];
 
 % Plot for verification
-figure; plot(x, y, 'ko'); text(x + 0.2, y + 0.2, string(1:2*N+2)); axis equal;
-title('Node Layout Verification (30° Steering Limit)'); xlabel('X [m]'); ylabel('Y [m]');
-[~, ~] = mkdir('results\F');
-saveas(gcf, "results\F\node_layout_30deg.png")
+figure; hold on; axis equal
+plot(x, y, 'ko')
+dx = 0.50 * ones(size(x));          % default shift in x
+dy = 0.50 * ones(size(y));          % default shift in y
+% put the first label above-left, last label below-right
+dx(1)   = 0.75;   dy(1)   =  1.0;   % start node
+dx(end) =  0.75;   dy(end) = -1.0;   % end   node
+text(x + dx, ...
+     y + dy, ...
+     string(1:numel(x)), "HorizontalAlignment","center");
+title('Node Layout Verification'); xlabel('X [m]'); ylabel('Y [m]');
+xlim([-8 27])
+
 
 %% F.2 - Rebuild Cost Matrix with new minimum turning radius
 HUGE = 1e6;                       % "impossible" cost
@@ -749,9 +758,15 @@ for k = 1:numLinks
     end
 end
 
+N = size(guidedPoints,1);
+labels = string(1:N).';          % now an N×1 column vector
 % Plot the generated waypoints
 figure; plot(waypoints(:,1), waypoints(:,2), 'b.-'); axis equal; hold on;
-plot(guidedPoints(:,1), guidedPoints(:,2), 'o')
+plot(guidedPoints(:,1), guidedPoints(:,2), 'o');
+text( guidedPoints(:,1), ...
+      guidedPoints(:,2), ...
+      labels, ...
+      'HorizontalAlignment','center' );
 title('Generated Waypoints and Guided Points (30° Steering Limit)');
 xlabel('X [m]'); ylabel('Y [m]');
 legend("Waypoints", "Guided Points", Location="best")
@@ -769,7 +784,7 @@ time_vec = 0:DT:T-DT;
 
 % Vehicle and Controller Parameters
 L = 2.5;               % wheelbase
-Ld_line = 0.8;         % look-ahead distance
+Ld_line = 2.0;         % look-ahead distance
 Ld_turn = 0.5;
 gamma_max = deg2rad(30);  % 30 degree steering limit
 gamma_min = -gamma_max;

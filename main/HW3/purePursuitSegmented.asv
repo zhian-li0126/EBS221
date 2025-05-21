@@ -39,7 +39,7 @@ function [steer, cte, status] = purePursuitSegmented( ...
     lastSeg = max(segID);
     end_point = [guidedPoints(end,1), guidedPoints(end,2)]; % The end point coordinates [x, y]
     
-    if gpDist > prevDist && gpDist > 10 && nxgpDist > nxprevDist && curSeg < lastSeg
+    if  gpDist > prevDist && nxgpDist > nxprevDist && gpDist > 5 && curSeg < lastSeg
         % steer directly at current guided point
         vecAng = atan2(gp(2)-y, gp(1)-x);
         steer  = wrapToPi(vecAng - th);
