@@ -18,95 +18,120 @@ x_end = x_start;
 y_end = y_start;
 
 % Coordinates of headland nodes (lower and upper)
-x_lower = W + 2.5 * (0:N-1); % added 2.5 m to correct X coordinates
-y_lower = zeros(1, N);
-
-x_upper = x_lower;
-y_upper = RL * ones(1, N);
+x_lower = W/2 + W * (0:N-1); % Lower headland nodes X coordinates
+y_lower = zeros(1, N);       % Lower headland nodes Y coordinates
+x_upper = x_lower;           % Upper headland nodes X coordinates  
+y_upper = RL * ones(1, N);   % Upper headland nodes Y coordinates
 
 % Assemble full node coordinate list (1=start, 2..N+1=lower, N+2..2N+1=upper, 2N+2=end)
 x = [x_start, x_lower, x_upper, x_end];
 y = [y_start, y_lower, y_upper, y_end];
 
 % Plot for verification
-figure; plot(x, y, 'ko'); text(x + 0.2, y + 0.2, string(1:2*N+2)); axis equal;
+figure; hold on; axis equal
+plot(x, y, 'ko')
+dx = 0.50 * ones(size(x));          % default shift in x
+dy = 0.50 * ones(size(y));          % default shift in y
+% put the first label above-left, last label below-right
+dx(1)   = 0.75;   dy(1)   =  1.0;   % start node
+dx(end) =  0.75;   dy(end) = -1.0;   % end   node
+text(x + dx, ...
+     y + dy, ...
+     string(1:numel(x)), "HorizontalAlignment","center");
 title('Node Layout Verification'); xlabel('X [m]'); ylabel('Y [m]');
-[~, ~] = mkdir('results\A');
-saveas(gcf, "results\A\node_layout.png")
+xlim([-8 27])
 
 %% -------------------- Step B: Build Cost Matrix --------------------
-HUGE = 1e6; % Large penalty value
-DMAT = HUGE * ones(2*N+2); % Initialize with large values
+HUGE = 1e6;                       % "impossible" cost
+DMAT = HUGE * ones(2*N+2);        % start with all moves disabled
 
-% 1. Row traversal cost (zero cost between lower-upper of the same row)
-for i = 2:N+1 % lower nodes
-    for j = N+2:2*N+1 % upper nodes
-        if (j - i) == N
-            DMAT(i,j) = 0; % row traversal is "free"
-            DMAT(j,i) = 0;
+% ---- (1) Row-traversal costs: lower ↔ upper in SAME row ---------------
+% Moving from any lower headland node to any upper headland node (and vice versa)
+% is only possible if both nodes belong to the same field row
+for i = 2:N+1 % for each lower node
+    for j = N+2:2*N+1 % for each upper node
+        if (j-i) == N % if nodes belong to same row, non working cost is zero
+            DMAT(i,j) = 0; % Cost to travel within a row is zero (assuming cultivation cost is zero)
+            DMAT(j,i) = 0; % Same for reverse direction
+        else
+            DMAT(i,j) = HUGE; % Not possible to go from lower to upper if not in same row
+            DMAT(j,i) = HUGE; % Same for reverse direction
         end
     end
 end
 
-% 2. Headland turning costs (Π or Ω turns)
-for i = 2:N                    % bottom nodes only
-    for j = i+1:N+1            % look only to the right of i
-        d       = j - i;       % |i-j|  (guaranteed ≥1 here)
-        spacing = d * W;       % lateral distance between the rows
-
-        if spacing > 2*Rmin    % ⇒ Π-turn is feasible
-            % ── Π-turn length = 180° arc + (d-1) straight gaps ──
-            half_circle = pi * Rmin;          % 180° arc
-            straight    = (d-1) * W;          % bridge between rows
-            cost        = half_circle + straight;
-        else                   % ⇒ use Ω-turn
-            % ── Ω-turn length = two 180° arcs back-to-back ──
-            cost = 2 * pi * Rmin;
+% ---- (2) Headland turning costs: Π / Ω turns on south or north edges --
+% Compute turning costs between nodes i, j (both are at top or bottom)
+for i = 2:N+1 % for each node at the 'bottom'
+    for j = i+1:N+1 % for each node to the 'right' of node i
+        d = abs(j-i); % Number of rows between the nodes
+        dW = d * W;   % Physical distance between the rows
+        
+        % Check if a PI turn can be made (plus a straight line of length (d-1) row widths)
+        if (Rmin <= dW/2)
+            % PI turn cost = π * Rmin (for the semi-circle) + (d-1)*W (for the straight part)
+            DMAT(i,j) = pi * Rmin + (d-1) * W;
+        else
+            % Omega turn cost = 2 * π * Rmin (full circle of radius Rmin)
+            DMAT(i,j) = 2 * pi * Rmin;
         end
-
-        % write cost symmetrically for bottom & top nodes
-        DMAT(i,      j     ) = cost;
-        DMAT(j,      i     ) = cost;
-        DMAT(i+N,    j+N   ) = cost;
-        DMAT(j+N,    i+N   ) = cost;
+        
+        DMAT(j,i) = DMAT(i,j);           % symmetry of cost
+        DMAT(i+N, j+N) = DMAT(i,j);      % same cost for pair of top-nodes
+        DMAT(j+N, i+N) = DMAT(i,j);      % symmetry for top nodes
     end
 end
 
-% 3. Manhattan distances from start and end nodes to all field nodes
-for i = 2:2*N+1
-    DMAT(1,i) = abs(x(1) - x(i)) + abs(y(1) - y(i));
-    DMAT(i,1) = DMAT(1,i); % symmetry
-
-    DMAT(2*N+2,i) = abs(x(2*N+2) - x(i)) + abs(y(2*N+2) - y(i));
-    DMAT(i,2*N+2) = DMAT(2*N+2,i); % symmetry
+% ---- (3) Manhattan costs start/end ↔ all field nodes ------------------
+% Costs to travel from start node to any other field node (except for end node)
+% Costs to travel from end node to any other field node (except for start node)
+for i = 2:2*N+1 % all field row nodes
+    % Manhattan distance between this node and start node
+    DMAT(1,i) = abs(x(1)-x(i)) + abs(y(1)-y(i));
+    DMAT(i,1) = DMAT(1,i); % cost matrix symmetry
+    
+    % Manhattan distance between this node and end node
+    DMAT(2*N+2,i) = abs(x(2*N+2)-x(i)) + abs(y(2*N+2)-y(i));
+    DMAT(i,2*N+2) = DMAT(2*N+2,i); % cost matrix symmetry
 end
 
-% 4. Prohibit direct start-to-end transitions
+% ---- (4) Forbid direct Start ↔ End jump --------------------------------
+% Cost between start and end nodes is set to HUGE (not allowed)
 DMAT(1,2*N+2) = HUGE;
 DMAT(2*N+2,1) = HUGE;
-
-
-% Add penalties for crossing the field diagonally (disable jumps not to neighbor rows)
-for i = 2:N+1  % lower nodes
-     for j = 2:N+1  % other lower nodes
-         if abs(i - j) > 1
-             DMAT(i, j) = HUGE;
-             DMAT(i + N, j + N) = HUGE;
-         end
-     end
-end
 
 
 %% -------------------- Solve TSP (Step B Completion) --------------------
 XY = [x', y'];
 t = cputime;
 resultStruct = tspof_ga('xy', XY, 'DMAT', DMAT, ...
+                        'POPSIZE', 200, ...   % Doubled population size
+                        'NUMITER', 2e4, ...   % Doubled iterations
                         'SHOWRESULT', true, ...
                         'SHOWWAITBAR', true, ...
                         'SHOWPROG', true);
 E = cputime - t; % computation time
-
 route = [1, resultStruct.optRoute, 2*N+2]; % full node sequence
+
+% Verify that all rows are visited
+rows_visited = zeros(1, N);
+for i = 1:length(route)
+    node_idx = route(i);
+    if node_idx >= 2 && node_idx <= N+1  % Lower nodes
+        row_idx = node_idx - 1;
+        rows_visited(row_idx) = 1;
+    elseif node_idx >= N+2 && node_idx <= 2*N+1  % Upper nodes
+        row_idx = node_idx - N - 1;
+        rows_visited(row_idx) = 1;
+    end
+end
+
+% Check if all rows were visited
+missing_rows = find(rows_visited == 0);
+if ~isempty(missing_rows)
+    disp('Warning: The following rows were not visited:');
+    disp(missing_rows);
+end
 
 % Output result
 disp('Computed Optimal Route (Node Indices):');
@@ -521,7 +546,7 @@ x_end = x_start;
 y_end = y_start;
 
 % Coordinates of headland nodes (lower and upper)
-x_lower = W + 2.5 * (0:N-1); % added 2.5 m to correct X coordinates
+x_lower = W/2 + W * (0:N-1); % added 2.5 m to correct X coordinates
 y_lower = zeros(1, N);
 
 x_upper = x_lower;
@@ -538,77 +563,95 @@ title('Node Layout Verification (30° Steering Limit)'); xlabel('X [m]'); ylabel
 saveas(gcf, "results\F\node_layout_30deg.png")
 
 %% F.2 - Rebuild Cost Matrix with new minimum turning radius
-HUGE = 1e6; % Large penalty value
-DMAT = HUGE * ones(2*N+2); % Initialize with large values
+HUGE = 1e6;                       % "impossible" cost
+DMAT = HUGE * ones(2*N+2);        % start with all moves disabled
 
-% 1. Row traversal cost (zero cost between lower-upper of the same row)
-for i = 2:N+1 % lower nodes
-    for j = N+2:2*N+1 % upper nodes
-        if (j - i) == N
-            DMAT(i,j) = 0; % row traversal is "free"
-            DMAT(j,i) = 0;
+% ---- (1) Row-traversal costs: lower ↔ upper in SAME row ---------------
+% Moving from any lower headland node to any upper headland node (and vice versa)
+% is only possible if both nodes belong to the same field row
+for i = 2:N+1 % for each lower node
+    for j = N+2:2*N+1 % for each upper node
+        if (j-i) == N % if nodes belong to same row, non working cost is zero
+            DMAT(i,j) = 0; % Cost to travel within a row is zero (assuming cultivation cost is zero)
+            DMAT(j,i) = 0; % Same for reverse direction
+        else
+            DMAT(i,j) = HUGE; % Not possible to go from lower to upper if not in same row
+            DMAT(j,i) = HUGE; % Same for reverse direction
         end
     end
 end
 
-% 2. Headland turning costs (Π or Ω turns)
-% UPDATED: Larger Rmin affects which turns are feasible
-for i = 2:N                    % bottom nodes only
-    for j = i+1:N+1            % look only to the right of i
-        d       = j - i;       % |i-j|  (guaranteed ≥1 here)
-        spacing = d * W;       % lateral distance between the rows
-
-        if spacing > 2*Rmin    % ⇒ Π-turn is feasible
-            % ── Π-turn length = 180° arc + (d-1) straight gaps ──
-            half_circle = pi * Rmin;          % 180° arc
-            straight    = (d-1) * W;          % bridge between rows
-            cost        = half_circle + straight;
-        else                   % ⇒ use Ω-turn
-            % ── Ω-turn length = two 180° arcs back-to-back ──
-            cost = 2 * pi * Rmin;
+% ---- (2) Headland turning costs: Π / Ω turns on south or north edges --
+% Compute turning costs between nodes i, j (both are at top or bottom)
+for i = 2:N+1 % for each node at the 'bottom'
+    for j = i+1:N+1 % for each node to the 'right' of node i
+        d = abs(j-i); % Number of rows between the nodes
+        dW = d * W;   % Physical distance between the rows
+        
+        % Check if a PI turn can be made (plus a straight line of length (d-1) row widths)
+        if (Rmin <= dW/2)
+            % PI turn cost = π * Rmin (for the semi-circle) + (d-1)*W (for the straight part)
+            DMAT(i,j) = pi * Rmin + (d-1) * W;
+        else
+            % Omega turn cost = 2 * π * Rmin (full circle of radius Rmin)
+            DMAT(i,j) = 2 * pi * Rmin;
         end
-
-        % write cost symmetrically for bottom & top nodes
-        DMAT(i,      j     ) = cost;
-        DMAT(j,      i     ) = cost;
-        DMAT(i+N,    j+N   ) = cost;
-        DMAT(j+N,    i+N   ) = cost;
+        
+        DMAT(j,i) = DMAT(i,j);           % symmetry of cost
+        DMAT(i+N, j+N) = DMAT(i,j);      % same cost for pair of top-nodes
+        DMAT(j+N, i+N) = DMAT(i,j);      % symmetry for top nodes
     end
 end
 
-% 3. Manhattan distances from start and end nodes to all field nodes
-for i = 2:2*N+1
-    DMAT(1,i) = abs(x(1) - x(i)) + abs(y(1) - y(i));
-    DMAT(i,1) = DMAT(1,i); % symmetry
-
-    DMAT(2*N+2,i) = abs(x(2*N+2) - x(i)) + abs(y(2*N+2) - y(i));
-    DMAT(i,2*N+2) = DMAT(2*N+2,i); % symmetry
+% ---- (3) Manhattan costs start/end ↔ all field nodes ------------------
+% Costs to travel from start node to any other field node (except for end node)
+% Costs to travel from end node to any other field node (except for start node)
+for i = 2:2*N+1 % all field row nodes
+    % Manhattan distance between this node and start node
+    DMAT(1,i) = abs(x(1)-x(i)) + abs(y(1)-y(i));
+    DMAT(i,1) = DMAT(1,i); % cost matrix symmetry
+    
+    % Manhattan distance between this node and end node
+    DMAT(2*N+2,i) = abs(x(2*N+2)-x(i)) + abs(y(2*N+2)-y(i));
+    DMAT(i,2*N+2) = DMAT(2*N+2,i); % cost matrix symmetry
 end
 
-% 4. Prohibit direct start-to-end transitions
+% ---- (4) Forbid direct Start ↔ End jump --------------------------------
+% Cost between start and end nodes is set to HUGE (not allowed)
 DMAT(1,2*N+2) = HUGE;
 DMAT(2*N+2,1) = HUGE;
-
-% Add penalties for crossing the field diagonally (disable jumps not to neighbor rows)
-for i = 2:N+1  % lower nodes
-     for j = 2:N+1  % other lower nodes
-         if abs(i - j) > 1
-             DMAT(i, j) = HUGE;
-             DMAT(i + N, j + N) = HUGE;
-         end
-     end
-end
 
 %% -------------------- Solve TSP (Step F.2 Completion) --------------------
 XY = [x', y'];
 t = cputime;
 resultStruct = tspof_ga('xy', XY, 'DMAT', DMAT, ...
+                        'POPSIZE', 200, ...   % Doubled population size
+                        'NUMITER', 2e4, ...   % Doubled iterations
                         'SHOWRESULT', true, ...
                         'SHOWWAITBAR', true, ...
                         'SHOWPROG', true);
 E = cputime - t; % computation time
-
 route = [1, resultStruct.optRoute, 2*N+2]; % full node sequence
+
+% Verify that all rows are visited
+rows_visited = zeros(1, N);
+for i = 1:length(route)
+    node_idx = route(i);
+    if node_idx >= 2 && node_idx <= N+1  % Lower nodes
+        row_idx = node_idx - 1;
+        rows_visited(row_idx) = 1;
+    elseif node_idx >= N+2 && node_idx <= 2*N+1  % Upper nodes
+        row_idx = node_idx - N - 1;
+        rows_visited(row_idx) = 1;
+    end
+end
+
+% Check if all rows were visited
+missing_rows = find(rows_visited == 0);
+if ~isempty(missing_rows)
+    disp('Warning: The following rows were not visited:');
+    disp(missing_rows);
+end
 
 % Output result
 disp('Computed Optimal Route with 30° Steering Limit (Node Indices):');
@@ -721,14 +764,14 @@ clear q_history cte_history
 global dt DT
 dt = 0.001;    % 1 ms integration step
 DT = 0.01;     % 10 ms control update period
-T = 1000.0;    % run until it reaches the end point
+T = 2000.0;    % run until it reaches the end point
 time_vec = 0:DT:T-DT;
 
 % Vehicle and Controller Parameters
 L = 2.5;               % wheelbase
-Ld_line = 1.0;         % look-ahead distance
-Ld_turn = 0.2;
-gamma_max = deg2rad(30);  % 30 degree steering limit
+Ld_line = 2.0;         % look-ahead distance
+Ld_turn = 1.0;
+gamma_max = deg2rad(45);  % 30 degree steering limit
 gamma_min = -gamma_max;
 v_ref = 1.0;           % constant forward speed
 tau_gamma = 0.0;       % instant steering dynamics
@@ -784,6 +827,10 @@ for k = 1:numSteps
         cte_history = cte_history(1:k, :);
         status_history = status_history(1:k, :);
         break;
+    end
+
+    if k == numSteps
+        warning("Run out of time!")
     end
 end
 
@@ -1225,29 +1272,6 @@ function seg_end = dubins_segment(seg_param, seg_init, seg_type)
     end
 end
 
-function err = computeCrosstrackError(state, waypoints)
-%COMPUTECROSSTRACKERROR  Signed distance from robot to nearest path segment
-%  state is [x; y; theta; ...], waypoints is M×2 [x y].
-    p = state(1:2); 
-    errMin = Inf;
-    for i = 1:size(waypoints,1)-1
-        A = waypoints(i, :)';
-        B = waypoints(i+1, :)';
-        v = B - A;
-        w = p - A;
-        t = dot(w,v)/dot(v,v);
-        t = max(0, min(1, t));        % project onto segment
-        proj = A + t*v;
-        d = norm(p - proj);
-        if d < errMin
-            errMin = d;
-            % sign = + if robot is to the left of AB (using z-component of cross)
-            cp = v(1)*(p(2)-A(2)) - v(2)*(p(1)-A(1));
-            signErr = sign(cp);
-            err = signErr * d;
-        end
-    end
-end
 
 
 

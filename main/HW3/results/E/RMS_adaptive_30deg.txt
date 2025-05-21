@@ -1,1 +1,1 @@
-RMS CTE (adaptive Ld, 30° steering): 1.8449
+RMS CTE (adaptive Ld, 30° steering): 1.2773

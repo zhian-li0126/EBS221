@@ -1,0 +1,7 @@
+RMS CTE (overall with Fish-tail): 0.1943 m
+RMS CTE (forward motion): 0.1943 m
+RMS CTE (reverse motion): 0.3924 m
+RMS CTE (turn segments): 0.0852 m
+RMS CTE (straight segments): 0.1954 m
+
+Fish-tail turns were used for 1 out of 11 turn segments

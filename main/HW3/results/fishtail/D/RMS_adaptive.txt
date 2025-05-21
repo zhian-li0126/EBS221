@@ -1,0 +1,1 @@
+RMS CTE (adaptive with Fish-tail): 0.1943
