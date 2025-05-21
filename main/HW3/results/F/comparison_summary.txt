@@ -1,7 +1,7 @@
 Performance Comparison - 30° Steering Limit
 ---------------------------------------------
 
-RMS CTE (30° optimized path): 1.3697 m
+RMS CTE (30° optimized path): 0.1451 m
 Path Length (30° optimized): 593.72 m
 Total Simulation Time: 1000.00 s
 

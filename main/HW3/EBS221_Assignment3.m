@@ -847,28 +847,6 @@ fid = fopen('results\F\RMS_optimized_30deg.txt','w');
 fprintf(fid, 'RMS CTE (30° optimized path): %.4f\n', rms_cte);
 fclose(fid);
 
-%% Compare results between original 60° and new 30° solutions
-% Create summary figure showing both paths
-figure; hold on;
-plot(q_history(:,1), q_history(:,2), 'b-', 'LineWidth', 1.5);
-grid on; axis equal;
-title('Path Comparison: 30° Steering Limit');
-xlabel('X [m]'); ylabel('Y [m]');
-saveas(gcf, 'results\F\path_comparison.png');
-
-% Create summary text file
-fid = fopen('results\F\comparison_summary.txt','w');
-fprintf(fid, 'Performance Comparison - 30° Steering Limit\n');
-fprintf(fid, '---------------------------------------------\n\n');
-fprintf(fid, 'RMS CTE (30° optimized path): %.4f m\n', rms_cte);
-fprintf(fid, 'Path Length (30° optimized): %.2f m\n', sum(sqrt(sum(diff(waypoints).^2, 2))));
-fprintf(fid, 'Total Simulation Time: %.2f s\n', length(status_history)*DT);
-fprintf(fid, '\nObservations on 30° Steering Limit Effects:\n');
-fprintf(fid, '- More gradual turns requiring larger turning radius\n');
-fprintf(fid, '- Different optimal path sequence due to turning constraints\n');
-fprintf(fid, '- More guided-point overrides needed during tight turns\n');
-fclose(fid);
-
 %% 
 
 %-----------------------Helper Functions----------------------------------
