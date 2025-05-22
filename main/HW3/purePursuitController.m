@@ -1,4 +1,4 @@
-function [steer_angle, cross_track_error] = purePursuitController( ...
+function [steer_angle, cross_track_error, status] = purePursuitController( ...
         q, L, Ld, path, waypointSegment, guidedPoints, gamma_max, gamma_min)
     % PUREPURSUITCONTROLLER with guided-point override
     %  q               : [x; y; theta; ...]
@@ -18,6 +18,7 @@ function [steer_angle, cross_track_error] = purePursuitController( ...
     x     = q(1);
     y     = q(2);
     theta = q(3);
+    status = 0;
 
     % 2) find closest waypoint & segment
     diffs = path - [x y];

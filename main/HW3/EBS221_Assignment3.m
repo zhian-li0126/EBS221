@@ -1,6 +1,7 @@
 %%
 
 clear; close all; clc;
+rng("default"); % random seed for reproductivity
 
 %% -------------------- Step A: Define Problem Parameters --------------------
 N = 10;                     % number of rows
@@ -246,7 +247,8 @@ saveas(gcf, "results\C\waypoints.png")
 
 %% -------------------- Step D: Simulate Path Following with Pure Pursuit Controller --------------------
 
-clear q_history cte_history
+clear q_history cte_history status_history
+clear purePursuitSegmented purePursuitController
 
 % Reset Integration Parameters
 global dt DT
@@ -258,7 +260,7 @@ time_vec = 0:DT:T-DT;
 % Vehicle and Controller Parameters
 L = 2.5;               % wheelbase
 Ld_line = 1.0;         % look-ahead distance
-Ld_turn = 0.5;
+Ld_turn = 0.8;
 gamma_max = deg2rad(60);
 gamma_min = -gamma_max;
 v_ref = 1.0;           % constant forward speed
@@ -383,7 +385,8 @@ fclose(fid);
 
 %% -------------------- Step E: Repeat Step D with 30 degree steering limit --------------------
 
-clear q_history cte_history
+clear q_history cte_history status_history
+clear purePursuitSegmented purePursuitController
 
 % Reset Integration Parameters
 global dt DT
@@ -394,8 +397,8 @@ time_vec = 0:DT:T-DT;
 
 % Vehicle and Controller Parameters
 L = 2.5;               % wheelbase
-Ld_line = 2.0;         % look-ahead distance
-Ld_turn = 0.2;
+Ld_line = 4.0;         % look-ahead distance
+Ld_turn = 2.0;
 gamma_max = deg2rad(30);  % CHANGED: maximum steering angle to 30 degrees
 gamma_min = -gamma_max;
 v_ref = 1.0;           % constant forward speed
@@ -529,7 +532,7 @@ saveas(gcf, 'results\E\steering_angles_30deg.png');
 
 %% F.1 - Redefine Problem Parameters with 30 degree steering limit
 clear; close all; clc;
-
+rng("default"); % random seed for reproductivity
 %% -------------------- Step A: Define Problem Parameters (Reused) --------------------
 N = 10;                     % number of rows
 RL = 20;                    % row length
@@ -677,6 +680,7 @@ fprintf(fid, 'Computed Minimum Distance (30° limit): %.4f\n', resultStruct.minD
 fprintf(fid, 'Computation Time: %.4f seconds\n', E);
 fclose(fid);
 
+
 %% Plot Solution
 figure; plot(x(route), y(route), 'r-o', 'LineWidth', 2);
 hold on; plot(x, y, 'ko'); text(x + 0.2, y + 0.2, string(1:2*N+2));
@@ -758,13 +762,13 @@ for k = 1:numLinks
     end
 end
 
-N = size(guidedPoints,1);
-labels = string(1:N).';          % now an N×1 column vector
+nGuides = size(guidedPoints,1);
+labels  = string(1:nGuides).';  
 % Plot the generated waypoints
 figure; plot(waypoints(:,1), waypoints(:,2), 'b.-'); axis equal; hold on;
 plot(guidedPoints(:,1), guidedPoints(:,2), 'o');
-text( guidedPoints(:,1), ...
-      guidedPoints(:,2), ...
+text( guidedPoints(:,1)+1, ...
+      guidedPoints(:,2)+1, ...
       labels, ...
       'HorizontalAlignment','center' );
 title('Generated Waypoints and Guided Points (30° Steering Limit)');
@@ -774,6 +778,7 @@ saveas(gcf, "results\F\waypoints_30deg.png")
 
 %% F.4 - Re-simulate path following with 30 degree steering limit
 clear q_history cte_history
+clear purePursuitSegmented
 
 % Reset Integration Parameters
 global dt DT
@@ -784,8 +789,8 @@ time_vec = 0:DT:T-DT;
 
 % Vehicle and Controller Parameters
 L = 2.5;               % wheelbase
-Ld_line = 2.0;         % look-ahead distance
-Ld_turn = 0.5;
+Ld_line = 1.0;         % look-ahead distance
+Ld_turn = 0.2;
 gamma_max = deg2rad(30);  % 30 degree steering limit
 gamma_min = -gamma_max;
 v_ref = 1.0;           % constant forward speed
@@ -800,7 +805,7 @@ Qmin = [-inf; -inf; -inf; gamma_min; 0];
 q = [-3*W; RL/2; 0; 0; v_ref];
 
 numSteps    = length(time_vec);
-q_history   = zeros(numSteps+1,5);    % assuming state q has length 5
+q_history   = zeros(numSteps+1,5);
 cte_history = zeros(numSteps,3);
 status_history = zeros(numSteps,1);
 
@@ -812,7 +817,7 @@ for k = 1:numSteps
     [delta, ~, status] = purePursuitSegmented( ...
         q, L, Ld_line, Ld_turn, ...
         waypoints, waypointSegment, isTurnLink, guidedPoints, ...
-        gamma_max, gamma_min);
+        gamma_max, gamma_min, 1);
 
     % choose a base blend factor (tune between 0 and 1)
     % cte = α·cte_path + (1−α)·cte_gp
