@@ -1,1 +1,3 @@
-RMS CTE (adaptive with Fish-tail): 0.1943
+RMS CTE (adaptive with Fish-tail): 0.1943 m
+RMS CTE (straight lines, Fish-tail): 0.0818 m
+RMS CTE (headlands, Fish-tail): 0.3178 m

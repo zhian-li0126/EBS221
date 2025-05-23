@@ -1,7 +1,22 @@
+Fish-tail Path Following RMS Analysis
+====================================
+
+Overall Metrics:
 RMS CTE (overall with Fish-tail): 0.1943 m
+
+Segment-Based Classification (Waypoint Method):
+RMS CTE (straight line segments): 0.0818 m
+Number of straight line data points: 19970
+RMS CTE (headland turns): 0.3178 m
+Number of headland turn data points: 9810
+
+Gear-Based Classification:
 RMS CTE (forward motion): 0.1943 m
 RMS CTE (reverse motion): 0.3924 m
+
+Legacy Segment Classification (Time-Based Method):
 RMS CTE (turn segments): 0.0852 m
 RMS CTE (straight segments): 0.1954 m
 
+Fish-tail Configuration:
 Fish-tail turns were used for 1 out of 11 turn segments

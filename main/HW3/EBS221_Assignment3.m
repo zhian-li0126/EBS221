@@ -322,12 +322,55 @@ end
 
 
 %% Visualization for Step D
-
 % results
 rms_cte = sqrt(mean(cte_history(:,1).^2));
 disp(['Segment-bounded RMS CTE: ', num2str(rms_cte), ' m']);
 
+% NEW: Compute RMS for straight lines and headland turns
+straight_indices = [];
+headland_indices = [];
+
+% Find which waypoint segment each simulation step corresponds to
+for k = 1:length(cte_history)
+    % Get robot position at this time step
+    robot_pos = q_history(k, 1:2);
+    
+    % Find closest waypoint
+    distances = sqrt(sum((waypoints - robot_pos).^2, 2));
+    [~, closest_wp_idx] = min(distances);
+    
+    % Get the segment ID for this waypoint
+    segment_id = waypointSegment(closest_wp_idx);
+    
+    % Check if this segment is a turn or straight line
+    if segment_id <= length(isTurnLink)
+        if isTurnLink(segment_id)
+            headland_indices = [headland_indices; k];
+        else
+            straight_indices = [straight_indices; k];
+        end
+    end
+end
+
+% Compute RMS for each segment type
+if ~isempty(straight_indices)
+    rms_straight = sqrt(mean(cte_history(straight_indices, 1).^2));
+    disp(['RMS CTE for straight line segments: ', num2str(rms_straight), ' m']);
+else
+    rms_straight = NaN;
+    disp('No straight line segments found');
+end
+
+if ~isempty(headland_indices)
+    rms_headlands = sqrt(mean(cte_history(headland_indices, 1).^2));
+    disp(['RMS CTE for headland turns: ', num2str(rms_headlands), ' m']);
+else
+    rms_headlands = NaN;
+    disp('No headland turn segments found');
+end
+
 [~,~] = mkdir("results\D");
+
 % save figures
 figure;
 plot(waypoints(:,1), waypoints(:,2), 'r--', LineWidth=2); hold on;
@@ -367,7 +410,6 @@ saveas(gcf, 'results\D\status_time.png');
 % 2) plot trajectory colored by status
 idxOn  = status_history == 1;
 idxOff = status_history == 0;
-
 figure; hold on;
 plot(waypoints(:,1), waypoints(:,2), 'k--', 'LineWidth', 1);  % reference path
 scatter(q_pos(idxOff,1), q_pos(idxOff,2), 8,'r', 'filled');
@@ -378,9 +420,19 @@ xlabel('X [m]'); ylabel('Y [m]');
 title('Robot Path Colored by Guided-Point Override Status');
 saveas(gcf, 'results\D\status_path.png');
 
-% save RMS
+% save RMS (MODIFIED to include all metrics)
 fid = fopen('results\D\RMS_adaptive.txt','w');
-fprintf(fid, 'RMS CTE (adaptive Ld): %.4f\n', rms_cte);
+fprintf(fid, 'RMS CTE (adaptive Ld): %.4f m\n', rms_cte);
+if ~isnan(rms_straight)
+    fprintf(fid, 'RMS CTE (straight lines): %.4f m\n', rms_straight);
+else
+    fprintf(fid, 'RMS CTE (straight lines): No data\n');
+end
+if ~isnan(rms_headlands)
+    fprintf(fid, 'RMS CTE (headlands): %.4f m\n', rms_headlands);
+else
+    fprintf(fid, 'RMS CTE (headlands): No data\n');
+end
 fclose(fid);
 
 %% -------------------- Step E: Repeat Step D with 30 degree steering limit --------------------
@@ -459,12 +511,55 @@ for k = 1:numSteps
 end
 
 %% Visualization for Step E
-
 % results
 rms_cte = sqrt(mean(cte_history(:,1).^2));
 disp(['Segment-bounded RMS CTE (30-deg limit): ', num2str(rms_cte), ' m']);
 
+% NEW: Compute RMS for straight lines and headland turns
+straight_indices = [];
+headland_indices = [];
+
+% Find which waypoint segment each simulation step corresponds to
+for k = 1:length(cte_history)
+    % Get robot position at this time step
+    robot_pos = q_history(k, 1:2);
+    
+    % Find closest waypoint
+    distances = sqrt(sum((waypoints - robot_pos).^2, 2));
+    [~, closest_wp_idx] = min(distances);
+    
+    % Get the segment ID for this waypoint
+    segment_id = waypointSegment(closest_wp_idx);
+    
+    % Check if this segment is a turn or straight line
+    if segment_id <= length(isTurnLink)
+        if isTurnLink(segment_id)
+            headland_indices = [headland_indices; k];
+        else
+            straight_indices = [straight_indices; k];
+        end
+    end
+end
+
+% Compute RMS for each segment type
+if ~isempty(straight_indices)
+    rms_straight = sqrt(mean(cte_history(straight_indices, 1).^2));
+    disp(['RMS CTE for straight line segments (30-deg): ', num2str(rms_straight), ' m']);
+else
+    rms_straight = NaN;
+    disp('No straight line segments found');
+end
+
+if ~isempty(headland_indices)
+    rms_headlands = sqrt(mean(cte_history(headland_indices, 1).^2));
+    disp(['RMS CTE for headland turns (30-deg): ', num2str(rms_headlands), ' m']);
+else
+    rms_headlands = NaN;
+    disp('No headland turn segments found');
+end
+
 [~, ~] = mkdir("results\E");
+
 % save figures
 figure;
 plot(waypoints(:,1), waypoints(:,2), 'r--'); hold on;
@@ -503,7 +598,6 @@ saveas(gcf, 'results\E\status_time_30deg.png');
 % 2) plot trajectory colored by status
 idxOn  = status_history == 1;
 idxOff = status_history == 0;
-
 figure; hold on;
 plot(waypoints(:,1), waypoints(:,2), 'k--', 'LineWidth', 1);  % reference path
 scatter(q_pos(idxOff,1), q_pos(idxOff,2), 8,'r', 'filled');
@@ -514,9 +608,19 @@ xlabel('X [m]'); ylabel('Y [m]');
 title('Robot Path Colored by Guided-Point Override Status (30° Steering Limit)');
 saveas(gcf, 'results\E\status_path_30deg.png');
 
-% save RMS
+% save RMS (MODIFIED to include all metrics)
 fid = fopen('results\E\RMS_adaptive_30deg.txt','w');
-fprintf(fid, 'RMS CTE (adaptive Ld, 30° steering): %.4f\n', rms_cte);
+fprintf(fid, 'RMS CTE (adaptive Ld, 30° steering): %.4f m\n', rms_cte);
+if ~isnan(rms_straight)
+    fprintf(fid, 'RMS CTE (straight lines, 30° steering): %.4f m\n', rms_straight);
+else
+    fprintf(fid, 'RMS CTE (straight lines, 30° steering): No data\n');
+end
+if ~isnan(rms_headlands)
+    fprintf(fid, 'RMS CTE (headlands, 30° steering): %.4f m\n', rms_headlands);
+else
+    fprintf(fid, 'RMS CTE (headlands, 30° steering): No data\n');
+end
 fclose(fid);
 
 % Compare steering angles between 60° and 30° simulations
@@ -855,10 +959,52 @@ for k = 1:numSteps
 end
 
 %% Visualization for Step F.4
-
 % results
 rms_cte = sqrt(mean(cte_history(:,1).^2));
 disp(['Segment-bounded RMS CTE (30-deg optimized path): ', num2str(rms_cte), ' m']);
+
+% NEW: Compute RMS for straight lines and headland turns
+straight_indices = [];
+headland_indices = [];
+
+% Find which waypoint segment each simulation step corresponds to
+for k = 1:length(cte_history)
+    % Get robot position at this time step
+    robot_pos = q_history(k, 1:2);
+    
+    % Find closest waypoint
+    distances = sqrt(sum((waypoints - robot_pos).^2, 2));
+    [~, closest_wp_idx] = min(distances);
+    
+    % Get the segment ID for this waypoint
+    segment_id = waypointSegment(closest_wp_idx);
+    
+    % Check if this segment is a turn or straight line
+    if segment_id <= length(isTurnLink)
+        if isTurnLink(segment_id)
+            headland_indices = [headland_indices; k];
+        else
+            straight_indices = [straight_indices; k];
+        end
+    end
+end
+
+% Compute RMS for each segment type
+if ~isempty(straight_indices)
+    rms_straight = sqrt(mean(cte_history(straight_indices, 1).^2));
+    disp(['RMS CTE for straight line segments (30-deg optimized): ', num2str(rms_straight), ' m']);
+else
+    rms_straight = NaN;
+    disp('No straight line segments found');
+end
+
+if ~isempty(headland_indices)
+    rms_headlands = sqrt(mean(cte_history(headland_indices, 1).^2));
+    disp(['RMS CTE for headland turns (30-deg optimized): ', num2str(rms_headlands), ' m']);
+else
+    rms_headlands = NaN;
+    disp('No headland turn segments found');
+end
 
 % save figures
 figure;
@@ -898,7 +1044,6 @@ saveas(gcf, 'results\F\optimized_status_time_30deg.png');
 % 2) plot trajectory colored by status
 idxOn  = status_history == 1;
 idxOff = status_history == 0;
-
 figure; hold on;
 plot(waypoints(:,1), waypoints(:,2), 'k--', 'LineWidth', 1);  % reference path
 scatter(q_pos(idxOff,1), q_pos(idxOff,2), 8,'r', 'filled');
@@ -909,9 +1054,19 @@ xlabel('X [m]'); ylabel('Y [m]');
 title('Robot Path by Guided-Point Override Status (30° Optimized Path)');
 saveas(gcf, 'results\F\optimized_status_path_30deg.png');
 
-% save RMS
+% save RMS (MODIFIED to include all metrics)
 fid = fopen('results\F\RMS_optimized_30deg.txt','w');
-fprintf(fid, 'RMS CTE (30° optimized path): %.4f\n', rms_cte);
+fprintf(fid, 'RMS CTE (30° optimized path): %.4f m\n', rms_cte);
+if ~isnan(rms_straight)
+    fprintf(fid, 'RMS CTE (straight lines, 30° optimized): %.4f m\n', rms_straight);
+else
+    fprintf(fid, 'RMS CTE (straight lines, 30° optimized): No data\n');
+end
+if ~isnan(rms_headlands)
+    fprintf(fid, 'RMS CTE (headlands, 30° optimized): %.4f m\n', rms_headlands);
+else
+    fprintf(fid, 'RMS CTE (headlands, 30° optimized): No data\n');
+end
 fclose(fid);
 
 %% 

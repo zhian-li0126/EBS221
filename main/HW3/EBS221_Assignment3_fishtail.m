@@ -396,6 +396,49 @@ end
 rms_cte = sqrt(mean(cte_history(:,1).^2));
 disp(['Segment-bounded RMS CTE with Fish-tail: ', num2str(rms_cte), ' m']);
 
+% NEW: Compute RMS for straight lines and headland turns using waypoint method
+straight_indices = [];
+headland_indices = [];
+
+% Find which waypoint segment each simulation step corresponds to
+for k = 1:length(cte_history)
+    % Get robot position at this time step
+    robot_pos = q_history(k, 1:2);
+    
+    % Find closest waypoint
+    distances = sqrt(sum((waypoints - robot_pos).^2, 2));
+    [~, closest_wp_idx] = min(distances);
+    
+    % Get the segment ID for this waypoint
+    segment_id = waypointSegment(closest_wp_idx);
+    
+    % Check if this segment is a turn or straight line
+    if segment_id <= length(isTurnLink)
+        if isTurnLink(segment_id)
+            headland_indices = [headland_indices; k];
+        else
+            straight_indices = [straight_indices; k];
+        end
+    end
+end
+
+% Compute RMS for each segment type
+if ~isempty(straight_indices)
+    rms_straight = sqrt(mean(cte_history(straight_indices, 1).^2));
+    disp(['RMS CTE for straight line segments (Fish-tail): ', num2str(rms_straight), ' m']);
+else
+    rms_straight = NaN;
+    disp('No straight line segments found');
+end
+
+if ~isempty(headland_indices)
+    rms_headlands = sqrt(mean(cte_history(headland_indices, 1).^2));
+    disp(['RMS CTE for headland turns (Fish-tail): ', num2str(rms_headlands), ' m']);
+else
+    rms_headlands = NaN;
+    disp('No headland turn segments found');
+end
+
 % Plot robot path
 figure;
 plot(waypoints(:,1), waypoints(:,2), 'r--', 'LineWidth', 2); hold on;
@@ -446,7 +489,7 @@ else
     rms_cte_reverse = NaN;
 end
 
-% Calculate separate errors for straight segments and turns
+% Calculate separate errors for straight segments and turns (KEPT for compatibility)
 idxTurn = false(size(gear_history));
 for i = 1:length(gear_history)
     if i <= length(waypointSegment)
@@ -464,14 +507,39 @@ cte_straight_segments = cte_history(~idxTurn, 1);
 rms_cte_turn = sqrt(mean(cte_turn_segments.^2));
 rms_cte_straight = sqrt(mean(cte_straight_segments.^2));
 
-% Save detailed RMS CTE statistics
+% Save detailed RMS CTE statistics (ENHANCED with new metrics)
 fid = fopen('results\fishtail\D\RMS_detailed.txt','w');
-fprintf(fid, 'RMS CTE (overall with Fish-tail): %.4f m\n', rms_cte);
+fprintf(fid, 'Fish-tail Path Following RMS Analysis\n');
+fprintf(fid, '====================================\n\n');
+
+fprintf(fid, 'Overall Metrics:\n');
+fprintf(fid, 'RMS CTE (overall with Fish-tail): %.4f m\n\n', rms_cte);
+
+fprintf(fid, 'Segment-Based Classification (Waypoint Method):\n');
+if ~isnan(rms_straight)
+    fprintf(fid, 'RMS CTE (straight line segments): %.4f m\n', rms_straight);
+    fprintf(fid, 'Number of straight line data points: %d\n', length(straight_indices));
+else
+    fprintf(fid, 'RMS CTE (straight line segments): No data\n');
+end
+
+if ~isnan(rms_headlands)
+    fprintf(fid, 'RMS CTE (headland turns): %.4f m\n', rms_headlands);
+    fprintf(fid, 'Number of headland turn data points: %d\n', length(headland_indices));
+else
+    fprintf(fid, 'RMS CTE (headland turns): No data\n');
+end
+
+fprintf(fid, '\nGear-Based Classification:\n');
 fprintf(fid, 'RMS CTE (forward motion): %.4f m\n', rms_cte_forward);
 fprintf(fid, 'RMS CTE (reverse motion): %.4f m\n', rms_cte_reverse);
+
+fprintf(fid, '\nLegacy Segment Classification (Time-Based Method):\n');
 fprintf(fid, 'RMS CTE (turn segments): %.4f m\n', rms_cte_turn);
 fprintf(fid, 'RMS CTE (straight segments): %.4f m\n', rms_cte_straight);
-fprintf(fid, '\nFish-tail turns were used for %d out of %d turn segments\n', ...
+
+fprintf(fid, '\nFish-tail Configuration:\n');
+fprintf(fid, 'Fish-tail turns were used for %d out of %d turn segments\n', ...
     sum(useFishtail), sum(isTurnLink));
 fclose(fid);
 
@@ -488,9 +556,19 @@ title('Forward/Reverse Gear Status During Path Following');
 grid on;
 saveas(gcf, 'results\fishtail\D\gear_status.png');
 
-% Save overall RMS
+% Save overall RMS (ENHANCED to include new metrics)
 fid = fopen('results\fishtail\D\RMS_adaptive.txt','w');
-fprintf(fid, 'RMS CTE (adaptive with Fish-tail): %.4f\n', rms_cte);
+fprintf(fid, 'RMS CTE (adaptive with Fish-tail): %.4f m\n', rms_cte);
+if ~isnan(rms_straight)
+    fprintf(fid, 'RMS CTE (straight lines, Fish-tail): %.4f m\n', rms_straight);
+else
+    fprintf(fid, 'RMS CTE (straight lines, Fish-tail): No data\n');
+end
+if ~isnan(rms_headlands)
+    fprintf(fid, 'RMS CTE (headlands, Fish-tail): %.4f m\n', rms_headlands);
+else
+    fprintf(fid, 'RMS CTE (headlands, Fish-tail): No data\n');
+end
 fclose(fid);
 %% -------------------- Helper Functions --------------------
 

@@ -1,1 +1,3 @@
-RMS CTE (adaptive Ld, 30° steering): 1.2519
+RMS CTE (adaptive Ld, 30° steering): 1.2519 m
+RMS CTE (straight lines, 30° steering): 0.8660 m
+RMS CTE (headlands, 30° steering): 1.4916 m

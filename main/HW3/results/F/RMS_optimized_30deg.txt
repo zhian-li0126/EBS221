@@ -1,1 +1,3 @@
-RMS CTE (30° optimized path): 0.0320
+RMS CTE (30° optimized path): 0.0320 m
+RMS CTE (straight lines, 30° optimized): 0.0296 m
+RMS CTE (headlands, 30° optimized): 0.0335 m
