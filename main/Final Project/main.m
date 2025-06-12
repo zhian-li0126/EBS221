@@ -22,3 +22,16 @@ angleStep = deg2rad(0.125); % angular resolution, 0.125 deg
 rangeMax = 20;              % max Lidar range, 20 meters
 
 
+%% ----- Generate bitmap for Lidar usage -----
+generateNursery
+x; y;
+
+
+
+%% ----- helper function -----
+
+function [] = compute_covar()
+
+
+
+end
