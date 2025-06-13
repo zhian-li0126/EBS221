@@ -6,6 +6,17 @@ clear; close all; clc;
 generateNursery; % The bitmap is "ground-truth"; robot DO NOT consult it except through laserScannerNoisy.p Needed for simulation.
 % x; y;
 
+[R,C]   = size(bitmap);         % grid size taken from synthetic map
+logOdds = zeros(R,C);           % start with p = 0.5 everywhere
+p_occ   = 0.7;  p_free = 0.3;   % inverse-sensor model constants
+L_max   = 6;                    % log-odds saturation
+
+cellW = Xmax / C;    % cell width  [m]
+cellH = Ymax / R;    % cell height [m]
+
+RL = 20;          % row length (south-north) used by rows2Nodes
+
+
 %% ----- Initialize all parameters -----
 
 % Parameters of the vehicle
@@ -26,11 +37,12 @@ umax = [gamma_limit;3];     % upper bounds
 Qmin = [-inf; -inf; -inf; -gamma_limit; 0];
 Qmax = [inf; inf; inf; gamma_limit;3];
 
-%$ ----- Time parameters -----
+%$ ----- Time parameters ----- %% =========================== TEMPORARY ADJUSTR
+% FROM Tsim = 2 for debugging
 global dt DT %#ok<GVMIS>
 dt = 0.001;
 DT  = 0.01;
-Tsim = 40;      % total simulation time [s] % quick test
+Tsim = 5;      % total simulation time [s]
 steps = 0:DT:Tsim;
 Nsteps = numel(steps);
 
@@ -39,8 +51,9 @@ q_true = [0 0 pi/2 0 v_ref];    % [x y theta gamma v]
 x_est = q_true(1:3)';           % EKF state [x y theta]
 P = eye(3);                     % initial covariance
 
-% Parameters of the Lidar
-angleSpan = deg2rad(180);   % max angle range, 180 deg
+% Parameters of the Lidar %% =========================== TEMPORARY ADJUSTR
+% FROM deg2rad(180) to deg2rad(1) for debugging
+angleSpan = deg2rad(180);   % max angle range, 180 deg 
 angleStep = deg2rad(0.125); % angular resolution, 0.125 deg
 rangeMax = 20;              % max Lidar range, 20 meters
 
@@ -56,10 +69,28 @@ odo_hist = zeros(Nsteps,2);
 gps_hist = zeros(floor(Nsteps/100),3);
 x_est_hist = zeros(Nsteps,3);
 scan_hist = cell(Nsteps,1);                % each cell will hold LiDAR rays
+cte_hist = zeros(Nsteps,1);
 
 %% ----- Noise covariances (initial guess) -----
 Q_odo = eye(2)*1e-3;                     % will be re‑estimated
 R_gps = diag([0.05 0.05 0.01]);          % will be re‑estimated
+
+%% ---------- controller / path-follower parameters ------------------
+Ld_line = 1.0;          % look-ahead on straight segments   [m]
+Ld_turn = 0.5;          % look-ahead while turning          [m]
+
+gamma_max =  gamma_limit;     % rename for brevity
+gamma_min = -gamma_limit;
+
+% --- a minimal dummy path for the first few milliseconds ------------
+% we simply aim 2 m straight ahead; will be replaced after the first
+% LiDAR-based planning cycle
+waypoints        = [q_true(1:2) ; q_true(1)+2  ,  q_true(2) ];
+waypointSegment  = [1 ; 1];
+isTurn           = false(1,1);
+guidedPoints     = waypoints(end,:);     % single guide-point
+
+
 
 %% ==================================================================
 %                           EKF MAIN LOOP                            
@@ -69,10 +100,20 @@ gps_idx = 0;
 for k = 1:Nsteps
     t = steps(k);
 
-    % ----- True dynamics
-    u_cmd   = [0; v_ref];                       % straight motion demo
-    [q_true, odo] = robot_odo(q_true, u_cmd, umin, umax, Qmin, Qmax, L, steer_tau, vel_tau);
+    % ---------- Pure-pursuit steering for current state ----------
+    [delta, cte, status] = purePursuitSegmented( ...
+                        q_true, L, Ld_line, Ld_turn, ...
+                        waypoints, waypointSegment, isTurn, guidedPoints, ...
+                        gamma_max, gamma_min);
+    cte_hist(k) = cte;
 
+    % ----- True dynamics  (uses the steering just computed)
+    u_cmd = [delta ; v_ref];                    % [desired γ , desired v]
+    [q_true, odo] = robot_odo(q_true, u_cmd, ...
+                              umin, umax, Qmin, Qmax, ...
+                              L, steer_tau, vel_tau);
+
+   
     % Log true state & odometry (distance, heading incr returned by .p)
     q_hist(k,:)   = q_true;
     odo_hist(k,:) = odo(:)';
@@ -131,6 +172,25 @@ for k = 1:Nsteps
 
     logOdds = updateLaserBeamGrid(angles, ranges, Tl, ...
                               logOdds, R, C, Xmax, Ymax);
+
+    % --- every few seconds, after enough LiDAR points are in the grid:
+    rows  = detectRows(logOdds,cellW,cellH);          % try to find rows
+    if isempty(rows) || size(rows,1) < 2              % <─ nothing found yet
+        continue      % skip the rest of this EKF iteration and try again
+    end
+    
+    XY    = rows2Nodes(rows, rowLen);                     % safe: rows not empty
+    DMAT  = buildCostMatrix(XY, L, gamma_lim, rowStep);
+        
+    % --- run the open-TSP GA -------
+    res = tspof_ga('xy',XY,'dmat',DMAT, ...
+                   'popSize',200,'numIter',2e4, ...
+                   'showProg',false,'showResult',false);
+    
+    % --- build full node sequence -----------------------
+    nodeSeq = [1, res.optRoute, size(XY,1)];
+    
+    [wps,segId,isTurn,guided] = nodes2Waypoints(nodeSeq,XY,Rmin,rowStep);
     
     % ----- robot trace its path while the sim runs
     if k == 1
@@ -161,19 +221,45 @@ fprintf('Empirical GPS + compass covariance (R_gps):\n'); disp(emp_R);
 
 %% ----- Trajectory plots -----
 figure; subplot(1,2,1);
-imagesc(logOdds>0); axis image; title('Occupancy grid (p>0.5)');
+subplot(1,2,1);
+imagesc([0 Xmax],[0 Ymax],logOdds>0);
+set(gca,'YDir','normal'); axis equal tight
+title('Occupancy grid  p>0.5');  colormap(gray);
 colormap gray;
 subplot(1,2,2); hold on; grid on; axis equal;
 plot(q_hist(:,1), q_hist(:,2),'k--');
 plot(x_est_hist(:,1), x_est_hist(:,2),'b');
 legend('True','EKF'); xlabel('X [m]'); ylabel('Y [m]');
+
+%  Cross-track error vs time
+if exist('cte_hist','var') && ~isempty(cte_hist)
+    figure;
+    t_cte = (0:numel(cte_hist)-1)*DT;
+    plot(t_cte, cte_hist, 'LineWidth',1); grid on;
+    xlabel('time  [s]');  ylabel('cross–track error  [m]');
+    title(sprintf('CTE  •  rms = %.3f m', rms(cte_hist)));
+end
+
+%  Map view: occupancy + followed path + way-points
+figure; hold on; axis equal; grid on;
+% Probabilities from log-odds
+prob = 1 - 1./(1+exp(logOdds));           % p=0.5 -> 0.5  (useful greyscale)
+imagesc([0 Xmax],[0 Ymax],prob>0.5);      % p>0.5 considered occupied
+colormap(gray);  set(gca,'YDir','normal');
+plot(q_hist(:,1), q_hist(:,2),'b','LineWidth',1);          % true path
+plot(x_est_hist(:,1),x_est_hist(:,2),'c:');                % EKF path
+
+% 
+if exist('waypoints','var')
+    plot(waypoints(:,1),waypoints(:,2),'r.','MarkerSize',6);
+end
+title('Occupancy map (p>0.5)  &  robot trajectory');
+legend({'occupied','true','EKF','way-points'},'Location','bestoutside');
+
+
 %% ==================================================================
 %                  Local functions (covariance tools)                
 %% ==================================================================
-
-
-%% ----- Implement Laser Scanner -----
-% p = laserScannerNoisy(angleSpan, angleStep, rangeMax, q(3), bitmap, Xmax, Ymax);
 
 %% ----- Main function -----
 
@@ -288,3 +374,59 @@ if cond_num > 1000
 end
 
 end
+
+
+% =============== simple row detector =========================
+function rows = detectRows(logOdds, cellW, cellH)
+% rows  = detectRows(logOdds,cellW,cellH)
+% Very coarse:     1) convert log-odds → occupancy probability
+%                  2) sum occupied cells along Y
+%                  3) find peaks separated by ≥ 2 m  (≈   0.8*row width)
+%
+% Output
+%   rows  : column vector of X-centres of every detected row  [m]
+
+    proj = sum(logOdds > 0, 1);
+    if all(proj == 0), rows = []; return, end
+
+
+    prob = 1 - 1./(1 + exp(logOdds));          % p = 0.5 → unknown
+    occ  = prob > 0.5;                         % binary occupied grid
+    colSum = sum(occ,1);                       % one value per column (X)
+
+    % find peaks higher than 20 occupied cells
+    minSep  = round( 2.0 / cellW );            % ≥ 2 m separation
+    [~,locs] = findpeaks(double(colSum), ...
+                         'MinPeakHeight',20, ...
+                         'MinPeakDistance',minSep);
+
+    % convert “column index” → x-coordinate in metres
+    rows = (locs-0.5) * cellW;                 % centre of the column
+    rows = rows(:);                            % column vector
+end
+% =============================================================
+
+
+% ============= convert rows → node list for GA ===============
+function XY = rows2Nodes(rowX, RL)
+% XY = rows2Nodes(rowX, RL)
+% Build the (2N+2)×2 table of node coordinates expected by
+% buildCostMatrix / tspof_ga:
+%   node 1      : start/depot  (western side, y = RL/2)
+%   nodes 2..N+1: lower head-land points (y = 0)
+%   nodes N+2..2N+1: upper head-land points (y = RL)
+%   node 2N+2   : end/depot  (same as start here)
+
+    N   = numel(rowX);
+    x0  = min(rowX) - 3*abs(rowX(2)-rowX(1));   %  “-3 rows” to the west
+    y0  = RL/2;                                 % depot mid-row
+
+    lower = [ rowX(:) , zeros(N,1) ];           % y = 0
+    upper = [ rowX(:) , RL*ones(N,1) ];         % y = RL
+
+    XY = [ x0 , y0 ;          % node 1:  start
+           lower ;             % nodes 2…N+1
+           upper ;             % nodes N+2…2N+1
+           x0 , y0 ];          % node 2N+2: end
+end
+% =============================================================
