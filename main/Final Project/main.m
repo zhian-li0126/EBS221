@@ -2,6 +2,10 @@
 
 clear; close all; clc;
 
+%% ----- Generate bitmap for Lidar usage -----
+generateNursery; % The bitmap is "ground-truth"; robot DO NOT consult it except through laserScannerNoisy.p Needed for simulation.
+% x; y;
+
 %% ----- Initialize all parameters -----
 
 % Parameters of the vehicle
@@ -11,24 +15,132 @@ gamma_limit = deg2rad(55);  % steering limit, 55 deg
 gamma_v = 0.1;              % steering lag, 0.1 sec
 tau_v = 0.1;                % velocity lag, 0.1 sec
 v_ref = 1;                  % placeholder speed, may adjust dependent on the project
+steer_tau = 0.1;
+vel_tau = 0.1;
 
 % initial state of vehicle [x, y, theta, gamma, v]
 q = [0, 0, pi/2, 0, v_ref]; % start from (0,0), facing north, define the v_ref
 
+umin = [-gamma_limit;0];    % steering lower bounds
+umax = [gamma_limit;3];     % upper bounds
+Qmin = [-inf; -inf; -inf; -gamma_limit; 0];
+Qmax = [inf; inf; inf; gamma_limit;3];
+
+%$ ----- Time parameters -----
+global dt DT
+dt = 0.001;
+DT  = 0.01;
+Tsim = 5;      % total simulation time [s]
+steps = 0:DT:Tsim;
+Nsteps = numel(steps);
+
+% EKF initial state estimate [x, y, theta]
+q_true = [0 0 pi/2 0 v_ref];    % [x y theta gamma v]
+x_est = q_true(1:3)';           % EKF state [x y theta]
+P = eye(3);                     % initial covariance
 
 % Parameters of the Lidar
 angleSpan = deg2rad(180);   % max angle range, 180 deg
 angleStep = deg2rad(0.125); % angular resolution, 0.125 deg
 rangeMax = 20;              % max Lidar range, 20 meters
 
+%% ----- Data Storage -----
+q_hist  = zeros(Nsteps,5);
+odo_hist = zeros(Nsteps,2);
+gps_hist = zeros(floor(Nsteps/100),3);
+x_est_hist = zeros(Nsteps,3);
+scan_hist = cell(Nsteps,1);                % each cell will hold LiDAR rays
 
-%% ----- Generate bitmap for Lidar usage -----
-generateNursery;
-x; y;
+%% ----- Noise covariances (initial guess) -----
+Q_odo = eye(2)*1e-3;                     % will be re‑estimated
+R_gps = diag([0.05 0.05 0.01]);          % will be re‑estimated
+
+%% ==================================================================
+%                           EKF MAIN LOOP                            
+%% ==================================================================
+
+gps_idx = 0;
+for k = 1:Nsteps
+    t = steps(k);
+
+    % ----- True dynamics
+    u_cmd   = [0; v_ref];                       % straight motion demo
+    [q_true, odo] = robot_odo(q_true, u_cmd, umin, umax, Qmin, Qmax, L, steer_tau, vel_tau);
+
+    % Log true state & odometry (distance, heading incr returned by .p)
+    q_hist(k,:)   = q_true;
+    odo_hist(k,:) = odo(:)';
+
+    % ----- EKF prediction
+    delta_d     = odo(1);
+    delta_theta = odo(2);
+    th          = x_est(3);
+
+    x_pred = x_est + [delta_d*cos(th);
+                      delta_d*sin(th);
+                      delta_theta];
+    x_pred(3) = wrapToPi(x_pred(3));
+
+    Fx = eye(3);               % dF/dx
+    Fx(1,3) = -delta_d*sin(th);
+    Fx(2,3) =  delta_d*cos(th);
+
+    Fu = [cos(th) 0;
+          sin(th) 0;
+          0       1];          % dF/dw, where w = [d vtheta] noise
+
+    P = Fx*P*Fx' + Fu*Q_odo*Fu';
+
+    % ----- EKF correction (GPS each 1 s)
+    if mod(k,100) == 0
+        gps_idx = gps_idx + 1;
+        [x_gps,y_gps,th_gps] = GPS_CompassNoisy(q_true(1),q_true(2),q_true(3));
+        z     = [x_gps; y_gps; th_gps];
+        gps_hist(gps_idx,:) = z';
+
+        innov = z - x_pred;
+        innov(3) = wrapToPi(innov(3));
+
+        H  = eye(3);
+        S  = H*P*H' + R_gps;
+        K  = P*H'/S;
+
+        x_est = x_pred + K*innov;
+        x_est(3) = wrapToPi(x_est(3));
+        P = (eye(3)-K*H)*P;
+    else
+        x_est = x_pred;
+    end
+
+    % ----- Log estimate
+    x_est_hist(k,:) = x_est';
+
+    % ----- Simulate LiDAR (for later tasks)
+    Tl = [cos(q_true(3)) -sin(q_true(3)) q_true(1);
+          sin(q_true(3))  cos(q_true(3)) q_true(2);
+          0               0              1];        % SE(2) pose
+    scan_hist{k} = laserScannerNoisy(angleSpan, angleStep, rangeMax, Tl, bitmap, Xmax, Ymax);
+end
+
+%% ----- Compute empirical covariances -----
+[emp_Q, emp_R] = compute_sensor_covariances(q_hist, odo_hist, gps_hist);
+
+fprintf('\nEmpirical odometry covariance (Q_odo):\n'); disp(emp_Q);
+fprintf('Empirical GPS + compass covariance (R_gps):\n'); disp(emp_R);
+
+%% ----- Trajectory plots -----
+figure; hold on; grid on; axis equal;
+plot(q_hist(:,1), q_hist(:,2), 'k--');
+plot(x_est_hist(:,1), x_est_hist(:,2), 'b');
+legend('True','EKF'); xlabel('X [m]'); ylabel('Y [m]'); title('Trajectory – true vs EKF');
+
+%% ==================================================================
+%                  Local functions (covariance tools)                
+%% ==================================================================
 
 
 %% ----- Implement Laser Scanner -----
-p = laserScannerNoisy(angleSpan, angleStep, rangeMax, q(3), bitmap, Xmax, Ymax);
+% p = laserScannerNoisy(angleSpan, angleStep, rangeMax, q(3), bitmap, Xmax, Ymax);
 
 %% ----- Main function -----
 
