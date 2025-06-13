@@ -27,10 +27,10 @@ Qmin = [-inf; -inf; -inf; -gamma_limit; 0];
 Qmax = [inf; inf; inf; gamma_limit;3];
 
 %$ ----- Time parameters -----
-global dt DT
+global dt DT %#ok<GVMIS>
 dt = 0.001;
 DT  = 0.01;
-Tsim = 5;      % total simulation time [s]
+Tsim = 40;      % total simulation time [s] % quick test
 steps = 0:DT:Tsim;
 Nsteps = numel(steps);
 
@@ -43,6 +43,12 @@ P = eye(3);                     % initial covariance
 angleSpan = deg2rad(180);   % max angle range, 180 deg
 angleStep = deg2rad(0.125); % angular resolution, 0.125 deg
 rangeMax = 20;              % max Lidar range, 20 meters
+
+% Grid parameters
+[R,C]   = size(bitmap);         % use same resolution as provided map
+logOdds = zeros(R,C);           % start with p=0.5 everywhere
+p_occ   = 0.7; p_free = 0.3;    % inverse‑sensor model constants
+L_max   = 6;                    % log‑odds saturation
 
 %% ----- Data Storage -----
 q_hist  = zeros(Nsteps,5);
@@ -115,11 +121,36 @@ for k = 1:Nsteps
     % ----- Log estimate
     x_est_hist(k,:) = x_est';
 
-    % ----- Simulate LiDAR (for later tasks)
+    % --- LiDAR scan & occupancy‑grid update
     Tl = [cos(q_true(3)) -sin(q_true(3)) q_true(1);
           sin(q_true(3))  cos(q_true(3)) q_true(2);
-          0               0              1];        % SE(2) pose
-    scan_hist{k} = laserScannerNoisy(angleSpan, angleStep, rangeMax, Tl, bitmap, Xmax, Ymax);
+          0               0              1       ];        % SE(2) pose
+    scan = laserScannerNoisy(angleSpan, angleStep, rangeMax, Tl, bitmap, Xmax, Ymax);
+    angles = scan(:,1);
+    ranges = medfilt1(scan(:,2),5);    % spike removal
+
+    logOdds = updateLaserBeamGrid(angles, ranges, Tl, ...
+                              logOdds, R, C, Xmax, Ymax);
+    
+    % ----- robot trace its path while the sim runs
+    if k == 1
+    figure(99); clf; hold on; axis equal; grid on;
+    hTrue = plot(NaN,NaN,'k--');       % handles saved for speed
+    hEst  = plot(NaN,NaN,'b');
+    xlim([-5 45]); ylim([-5 45]);      % adjust to your map
+    end
+
+    if mod(k,20) == 0                       % refresh 5× per second
+    set(hTrue,'XData',q_hist(1:k,1),'YData',q_hist(1:k,2));
+    set(hEst ,'XData',x_est_hist(1:k,1),'YData',x_est_hist(1:k,2));
+    drawnow limitrate;
+    end
+
+    if mod(k,100) == 0                       % once per simulated second (DT=0.01)
+    fprintf('t = %4.1f / %4.1f  s  (%5.1f %% done)\\n',...
+            steps(k), Tsim, 100*k/Nsteps);
+    end
+
 end
 
 %% ----- Compute empirical covariances -----
@@ -129,11 +160,13 @@ fprintf('\nEmpirical odometry covariance (Q_odo):\n'); disp(emp_Q);
 fprintf('Empirical GPS + compass covariance (R_gps):\n'); disp(emp_R);
 
 %% ----- Trajectory plots -----
-figure; hold on; grid on; axis equal;
-plot(q_hist(:,1), q_hist(:,2), 'k--');
-plot(x_est_hist(:,1), x_est_hist(:,2), 'b');
-legend('True','EKF'); xlabel('X [m]'); ylabel('Y [m]'); title('Trajectory – true vs EKF');
-
+figure; subplot(1,2,1);
+imagesc(logOdds>0); axis image; title('Occupancy grid (p>0.5)');
+colormap gray;
+subplot(1,2,2); hold on; grid on; axis equal;
+plot(q_hist(:,1), q_hist(:,2),'k--');
+plot(x_est_hist(:,1), x_est_hist(:,2),'b');
+legend('True','EKF'); xlabel('X [m]'); ylabel('Y [m]');
 %% ==================================================================
 %                  Local functions (covariance tools)                
 %% ==================================================================
