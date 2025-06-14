@@ -53,6 +53,7 @@ P = eye(3);                     % initial covariance
 
 % Parameters of the Lidar %% =========================== TEMPORARY ADJUSTR
 % FROM deg2rad(180) to deg2rad(1) for debugging
+global angleSpan angleStep rangeMax
 angleSpan = deg2rad(180);   % max angle range, 180 deg 
 angleStep = deg2rad(0.125); % angular resolution, 0.125 deg
 rangeMax = 20;              % max Lidar range, 20 meters
@@ -255,6 +256,9 @@ if exist('waypoints','var')
 end
 title('Occupancy map (p>0.5)  &  robot trajectory');
 legend({'occupied','true','EKF','way-points'},'Location','bestoutside');
+
+%% Occupancy Grid
+
 
 
 %% ==================================================================
