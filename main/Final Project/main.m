@@ -94,125 +94,110 @@ guidedPoints     = waypoints(end,:);     % single guide-point
 
 
 %% ==================================================================
-%                           EKF MAIN LOOP                            
-%% ==================================================================
+% Extended Kalman Filter (EKF) Implementation -----
 
+% Initialization
+x_est = [0; 0; pi/2];        % initial state: [x; y; theta]
+P = eye(3);                  % initial covariance matrix
+H = eye(3);                  % measurement matrix
+Q_odo = diag([1e-3, 1e-4]);       % odometry noise
+R_gps = diag([0.05 0.05 0.01]);  % GPS/compass noise
+x_est_hist = zeros(Nsteps, 3);
+P_hist = zeros(Nsteps, 3, 3);
 gps_idx = 0;
-for k = 1:Nsteps
-    t = steps(k);
 
-    % ---------- Pure-pursuit steering for current state ----------
-    [delta, cte, status] = purePursuitSegmented( ...
-                        q_true, L, Ld_line, Ld_turn, ...
-                        waypoints, waypointSegment, isTurn, guidedPoints, ...
-                        gamma_max, gamma_min);
+% Visualization setup
+enableLivePlot = true;
+if enableLivePlot
+    figure(99); clf; hold on; axis equal; grid on;
+    hTrue = plot(NaN,NaN,'k--');
+    hEst  = plot(NaN,NaN,'b');
+    xlim([-5 45]); ylim([-5 45]);
+end
+
+% Main loop
+for k = 1:Nsteps
+    % Pure pursuit steering
+    [delta, cte, status] = purePursuitSegmented(q_true, L, Ld_line, Ld_turn,waypoints, waypointSegment, isTurn, guidedPoints, gamma_max, gamma_min);
     cte_hist(k) = cte;
 
-    % ----- True dynamics  (uses the steering just computed)
-    u_cmd = [delta ; v_ref];                    % [desired γ , desired v]
-    [q_true, odo] = robot_odo(q_true, u_cmd, ...
-                              umin, umax, Qmin, Qmax, ...
-                              L, steer_tau, vel_tau);
-
-   
-    % Log true state & odometry (distance, heading incr returned by .p)
+    % Ground truth update and odometry
+    u_cmd = [delta ; v_ref];
+    [q_true, odo] = robot_odo(q_true, u_cmd, umin, umax, Qmin, Qmax, L, steer_tau, vel_tau);
+    
     q_hist(k,:)   = q_true;
     odo_hist(k,:) = odo(:)';
 
-    % ----- EKF prediction
+    % EKF Prediction
     delta_d     = odo(1);
     delta_theta = odo(2);
     th          = x_est(3);
-
-    x_pred = x_est + [delta_d*cos(th);
-                      delta_d*sin(th);
-                      delta_theta];
+    x_pred = x_est + [delta_d*cos(th); delta_d*sin(th); delta_theta];
     x_pred(3) = wrapToPi(x_pred(3));
 
-    Fx = eye(3);               % dF/dx
+    Fx = eye(3);
     Fx(1,3) = -delta_d*sin(th);
     Fx(2,3) =  delta_d*cos(th);
+    Fu = [cos(th) 0; sin(th) 0; 0 1];
+    P_pred = Fx*P*Fx' + Fu*Q_odo*Fu';
 
-    Fu = [cos(th) 0;
-          sin(th) 0;
-          0       1];          % dF/dw, where w = [d vtheta] noise
-
-    P = Fx*P*Fx' + Fu*Q_odo*Fu';
-
-    % ----- EKF correction (GPS each 1 s)
+    % EKF Correction
     if mod(k,100) == 0
         gps_idx = gps_idx + 1;
-        [x_gps,y_gps,th_gps] = GPS_CompassNoisy(q_true(1),q_true(2),q_true(3));
-        z     = [x_gps; y_gps; th_gps];
+        [x_gps, y_gps, th_gps] = GPS_CompassNoisy(q_true(1), q_true(2), q_true(3));
+        z = [x_gps; y_gps; th_gps];
         gps_hist(gps_idx,:) = z';
 
         innov = z - x_pred;
         innov(3) = wrapToPi(innov(3));
 
-        H  = eye(3);
-        S  = H*P*H' + R_gps;
-        K  = P*H'/S;
-
+        S = H*P_pred*H' + R_gps;
+        K = P_pred*H'/S;
         x_est = x_pred + K*innov;
         x_est(3) = wrapToPi(x_est(3));
-        P = (eye(3)-K*H)*P;
+        P = (eye(3)-K*H)*P_pred;
     else
         x_est = x_pred;
+        P = P_pred;
     end
 
-    % ----- Log estimate
     x_est_hist(k,:) = x_est';
+    P_hist(k,:,:) = P;
 
-    % --- LiDAR scan & occupancy‑grid update
+    % LiDAR scan and occupancy update (every step)
     Tl = [cos(q_true(3)) -sin(q_true(3)) q_true(1);
           sin(q_true(3))  cos(q_true(3)) q_true(2);
-          0               0              1       ];        % SE(2) pose
+          0               0              1       ];
     scan = laserScannerNoisy(angleSpan, angleStep, rangeMax, Tl, bitmap, Xmax, Ymax);
     angles = scan(:,1);
-    ranges = medfilt1(scan(:,2),5);    % spike removal
+    ranges = medfilt1(scan(:,2),5);
+    logOdds = updateLaserBeamGrid(angles, ranges, Tl, logOdds, R, C, Xmax, Ymax);
 
-    logOdds = updateLaserBeamGrid(angles, ranges, Tl, ...
-                              logOdds, R, C, Xmax, Ymax);
-
-    % --- every few seconds, after enough LiDAR points are in the grid:
-    rows  = detectRows(logOdds,cellW,cellH);          % try to find rows
-    if isempty(rows) || size(rows,1) < 2              % <─ nothing found yet
-        continue      % skip the rest of this EKF iteration and try again
-    end
-    
-    XY    = rows2Nodes(rows, rowLen);                     % safe: rows not empty
-    DMAT  = buildCostMatrix(XY, L, gamma_lim, rowStep);
-        
-    % --- run the open-TSP GA -------
-    res = tspof_ga('xy',XY,'dmat',DMAT, ...
-                   'popSize',200,'numIter',2e4, ...
-                   'showProg',false,'showResult',false);
-    
-    % --- build full node sequence -----------------------
-    nodeSeq = [1, res.optRoute, size(XY,1)];
-    
-    [wps,segId,isTurn,guided] = nodes2Waypoints(nodeSeq,XY,Rmin,rowStep);
-    
-    % ----- robot trace its path while the sim runs
-    if k == 1
-    figure(99); clf; hold on; axis equal; grid on;
-    hTrue = plot(NaN,NaN,'k--');       % handles saved for speed
-    hEst  = plot(NaN,NaN,'b');
-    xlim([-5 45]); ylim([-5 45]);      % adjust to your map
+    % Path re-planning every 3 simulated seconds
+    if mod(k,300) == 0
+        rows  = detectRows(logOdds, cellW, cellH);
+        if ~isempty(rows) && numel(rows) >= 2
+            XY = rows2Nodes(rows, RL);
+            DMAT = buildCostMatrix(XY, L, gamma_limit, W);
+            res = tspof_ga('xy',XY,'dmat',DMAT, 'popSize',200,'numIter',2e4, 'showProg',false,'showResult',false);
+            nodeSeq = [1, res.optRoute, size(XY,1)];
+            [waypoints, waypointSegment, isTurn, guidedPoints] = nodes2Waypoints(nodeSeq, XY, L/tan(gamma_limit), W);
+        end
     end
 
-    if mod(k,20) == 0                       % refresh 5× per second
-    set(hTrue,'XData',q_hist(1:k,1),'YData',q_hist(1:k,2));
-    set(hEst ,'XData',x_est_hist(1:k,1),'YData',x_est_hist(1:k,2));
-    drawnow limitrate;
+    % Live plot update
+    if enableLivePlot && mod(k,20)==0
+        set(hTrue,'XData',q_hist(1:k,1),'YData',q_hist(1:k,2));
+        set(hEst ,'XData',x_est_hist(1:k,1),'YData',x_est_hist(1:k,2));
+        drawnow limitrate;
     end
 
-    if mod(k,100) == 0                       % once per simulated second (DT=0.01)
-    fprintf('t = %4.1f / %4.1f  s  (%5.1f %% done)\\n',...
-            steps(k), Tsim, 100*k/Nsteps);
+    if mod(k,100) == 0
+        fprintf('t = %4.1f / %4.1f  s  (%5.1f %% done)\n', steps(k), Tsim, 100*k/Nsteps);
     end
-
 end
+
+%% ==================================================================
 
 %% ----- Compute empirical covariances -----
 [emp_Q, emp_R] = compute_sensor_covariances(q_hist, odo_hist, gps_hist);
