@@ -42,7 +42,7 @@ Qmax = [inf; inf; inf; gamma_limit;3];
 global dt DT %#ok<GVMIS>
 dt = 0.001;
 DT  = 0.01;
-Tsim = 5;      % total simulation time [s]
+Tsim = 10;      % total simulation time [s]
 steps = 0:DT:Tsim;
 Nsteps = numel(steps);
 
@@ -168,13 +168,15 @@ for k = 1:Nsteps
     Tl = [cos(q_true(3)) -sin(q_true(3)) q_true(1);
           sin(q_true(3))  cos(q_true(3)) q_true(2);
           0               0              1       ];
-    scan = laserScannerNoisy(angleSpan, angleStep, rangeMax, Tl, bitmap, Xmax, Ymax);
-    angles = scan(:,1);
-    ranges = medfilt1(scan(:,2),5);
-    logOdds = updateLaserBeamGrid(angles, ranges, Tl, logOdds, R, C, Xmax, Ymax);
+    if mod(k,10) == 0  % every 100 ms
+        scan = laserScannerNoisy(angleSpan, angleStep, rangeMax, Tl, bitmap, Xmax, Ymax);
+        angles = scan(:,1);
+        ranges = medfilt1(scan(:,2),5);
+        logOdds = updateLaserBeamGrid(angles, ranges, Tl, logOdds, R, C, Xmax, Ymax);
+    end
 
-    % Path re-planning every 3 simulated seconds
-    if mod(k,300) == 0
+    % Path re-planning every 30 simulated seconds
+    if mod(k,3000) == 0
         rows  = detectRows(logOdds, cellW, cellH);
         if ~isempty(rows) && numel(rows) >= 2
             XY = rows2Nodes(rows, RL);
@@ -186,7 +188,7 @@ for k = 1:Nsteps
     end
 
     % Live plot update
-    if enableLivePlot && mod(k,20)==0
+    if enableLivePlot && mod(k,100)==0
         set(hTrue,'XData',q_hist(1:k,1),'YData',q_hist(1:k,2));
         set(hEst ,'XData',x_est_hist(1:k,1),'YData',x_est_hist(1:k,2));
         drawnow limitrate;
