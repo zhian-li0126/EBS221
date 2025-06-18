@@ -230,7 +230,7 @@ column_trajectory = planColumnTraversalTrajectory(detected_block_bounds, W, D);
 logOdds_2 = logOdds;
 %% Final tree detection and analysis
 fprintf('\nFinal tree detection and analysis...\n');
-logOdds_total = min(logOdds_1, logOdds_2);
+logOdds_total = max(logOdds_1, logOdds_2);
 [final_detected_trees, final_tree_diameters] = detectTrees(logOdds_total, Xmax, Ymax, ...
     'MinRadius', 0.1, 'MaxRadius', 1.0, 'OccThreshold', 0.55, 'Visualize', false);
 
@@ -239,7 +239,7 @@ logOdds_total = min(logOdds_1, logOdds_2);
 fprintf('\n=== FINAL PERFORMANCE ANALYSIS ===\n');
 if ~isempty(final_detected_trees)
     [error_stats] = calculateErrorHistograms(final_detected_trees, final_tree_diameters, ground_truth_trees);
-    generateOutputFile(final_detected_trees, final_tree_diameters, 'results/enhanced_navigation_trees.txt');
+    generateOutputFile(final_detected_trees, final_tree_diameters, 'results/navigation_trees.txt');
 end
 
 % Calculate total path metrics
@@ -251,12 +251,6 @@ fprintf('  Final position: (%.2f, %.2f)\n', q_true(1), q_true(2));
 fprintf('  Trees detected: %d\n', length(final_tree_diameters));
 fprintf('  Ground truth trees: %d\n', size(ground_truth_trees, 1));
 
-%% Save results
-hold off;
-close all;
-% Detect trees from the occupancy grid with adjusted parameters
-[tree_locations, tree_diameters] = detectTrees(logOdds_total, Xmax, Ymax, ...
-    'MinRadius', 0.1, 'MaxRadius', 1.0, 'OccThreshold', 0.55, 'Visualize', false);
 
 %% Create detailed results figure
 % 1. Built Occupancy Grid
@@ -270,11 +264,12 @@ xlabel('X (m)'); ylabel('Y (m)');
 colormap(gca, 'hot'); colorbar;
 saveas(fig1, 'results/occupancy_grid.png');
 
-% 2. Ground Truth vs Detected Tree Locations
+
+%2. Ground Truth vs Detected Tree Locations
 fig2 = figure;
 set(fig2, 'Position', [100, 100, 600, 500]);
 hold on;
-plot(ground_truth_trees(:,2), ground_truth_trees(:,1), 'ro', 'MarkerSize', 8, ...
+plot(ground_truth_trees(:,1), ground_truth_trees(:,2), 'ro', 'MarkerSize', 8, ...
      'MarkerFaceColor', 'red', 'DisplayName', 'Ground Truth');
 plot(tree_locations(:,1), tree_locations(:,2), 'bx', 'MarkerSize', 10, ...
      'LineWidth', 2, 'DisplayName', 'Detected');
@@ -284,6 +279,7 @@ legend('Location', 'best');
 grid on; axis equal;
 hold off;
 saveas(fig2, 'results/ground_truth_vs_detected.png');
+
 
 % 3. Detected Diameter Distribution
 if ~isempty(tree_diameters)
@@ -597,6 +593,11 @@ function [q_true, x_est, P, logOdds, path_x, path_y, scan_count, step_count, gps
             if distance_to_waypoint < 2.0 % 2m tolerance
                 target_reached = true;
             end
+
+            % Terminate the loop if approach the origin
+            if norm([q_true(1), q_true(2)] - [0, 0]) < 3 && size(wp_idx, 1) <= 100
+                break
+            end
             
             % Update visualization every 50 steps
             if mod(step_count, 50) == 0
@@ -623,10 +624,7 @@ function [q_true, x_est, P, logOdds, path_x, path_y, scan_count, step_count, gps
             fprintf('  %s progress: %.1f%% (%d/%d waypoints)\n', ...
                 phase_names{phase}, (wp_idx/size(trajectory,1))*100, wp_idx, size(trajectory,1));
         end
-        % Terminate the loop if approach the origin
-        if norm([q_true(1), q_true(2)] - [0, 0]) < 3 && size(wp_idx, 1) <= 100
-            break
-        end
+
     end
     
     fprintf('%s completed with %d scans\n', phase_names{phase}, scan_count - scan_count_init);
