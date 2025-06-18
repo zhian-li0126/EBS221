@@ -195,8 +195,7 @@ fprintf('\nDetecting trees from perimeter scan...\n');
 fprintf('*** PHASE 1 Completed: Most northeastern trees detected! ***\n');
 fprintf('Detected %d trees. Starting tree block navigation.\n', length(tree_diameters));
 
-% Save log map
-logOdds_1 = logOdds;
+
 % Update tree block bounds based on detections
 if ~isempty(detected_trees)
     detected_block_bounds.xmin = min(detected_trees(:,1)) - 1;
@@ -226,14 +225,20 @@ column_trajectory = planColumnTraversalTrajectory(detected_block_bounds, W, D);
     logOdds, map_R, map_C, Xmax, Ymax, p_occ, p_free, ...
     path_x, path_y, scan_count, step_count, gps_idx, median_window_size, ...
     h_map, current_phase);
-% Save log map
-logOdds_2 = logOdds;
+
 %% Final tree detection and analysis
 fprintf('\nFinal tree detection and analysis...\n');
-logOdds_total = min(logOdds_1, logOdds_2);
-[final_detected_trees, final_tree_diameters] = detectTrees(logOdds_total, Xmax, Ymax, ...
+[final_detected_trees, final_tree_diameters] = detectTrees(logOdds, Xmax, Ymax, ...
     'MinRadius', 0.1, 'MaxRadius', 1.0, 'OccThreshold', 0.55, 'Visualize', false);
 
+
+% Draw complete robot path with phase colors
+phase_colors = {'c-', 'm-', 'y-'}; % Cyan for perimeter, Magenta for columns, Yellow for return
+plot(path_x, path_y, 'r-', 'LineWidth', 1.5);
+plot(, path_y(1), 'go', 'MarkerSize', 10, 'MarkerFaceColor', 'green');
+plot(path_x(end), path_y(end), 'ro', 'MarkerSize', 10, 'MarkerFaceColor', 'red');
+title('Complete Navigation');
+hold off;
 
 %% Performance Analysis
 fprintf('\n=== FINAL PERFORMANCE ANALYSIS ===\n');
@@ -255,13 +260,12 @@ fprintf('  Ground truth trees: %d\n', size(ground_truth_trees, 1));
 hold off;
 close all;
 % Detect trees from the occupancy grid with adjusted parameters
-[tree_locations, tree_diameters] = detectTrees(logOdds_total, Xmax, Ymax, ...
+[tree_locations, tree_diameters] = detectTrees(logOdds, Xmax, Ymax, ...
     'MinRadius', 0.1, 'MaxRadius', 1.0, 'OccThreshold', 0.55, 'Visualize', false);
 
 %% Create detailed results figure
 % 1. Built Occupancy Grid
 fig1 = figure;
-prob_map = logOddsToProbability(logOdds);
 set(fig1, 'Position', [100, 100, 600, 500]);
 imagesc(x_im, y_im, prob_map);
 set(gca,'YDir','normal'); axis equal;
@@ -274,7 +278,7 @@ saveas(fig1, 'results/occupancy_grid.png');
 fig2 = figure;
 set(fig2, 'Position', [100, 100, 600, 500]);
 hold on;
-plot(ground_truth_trees(:,2), ground_truth_trees(:,1), 'ro', 'MarkerSize', 8, ...
+plot(ground_truth_trees(:,1), ground_truth_trees(:,2), 'ro', 'MarkerSize', 8, ...
      'MarkerFaceColor', 'red', 'DisplayName', 'Ground Truth');
 plot(tree_locations(:,1), tree_locations(:,2), 'bx', 'MarkerSize', 10, ...
      'LineWidth', 2, 'DisplayName', 'Detected');
@@ -318,19 +322,6 @@ if ~isempty(ground_truth_trees)
     hold off;
     saveas(fig4, 'results/ground_truth_diameter_distribution.png');
 end
-
-% 5. Ground Truth Environment
-fig5 = figure;
-set(gcf, 'Position', [50, 50, 1400, 600]);
-x_im = [0 Xmax]; y_im = [0 Ymax];
-imagesc(x_im, y_im, flip(bitmap));
-set(gca,'YDir','normal');
-axis equal;
-title('Ground Truth Environment');
-xlabel('X (m)'); ylabel('Y (m)');
-colormap(gca, 'gray');
-hold off;
-saveas(fig5, 'results/ground_truth_environment.png')
 
 fprintf('\nnavigation complete! Results saved in "results" directory\n');
 
@@ -622,10 +613,6 @@ function [q_true, x_est, P, logOdds, path_x, path_y, scan_count, step_count, gps
         if mod(wp_idx, max(1, floor(size(trajectory,1)/10))) == 0
             fprintf('  %s progress: %.1f%% (%d/%d waypoints)\n', ...
                 phase_names{phase}, (wp_idx/size(trajectory,1))*100, wp_idx, size(trajectory,1));
-        end
-        % Terminate the loop if approach the origin
-        if norm([q_true(1), q_true(2)] - [0, 0]) < 3 && size(wp_idx, 1) <= 100
-            break
         end
     end
     

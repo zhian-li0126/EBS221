@@ -86,6 +86,7 @@ function [steer, cte, status] = purePursuitSegmented( ...
         end
     end
 
+    idx = min(idx, size(path, 1));
     cte = norm([x y] - path(idx,:));
 
     
